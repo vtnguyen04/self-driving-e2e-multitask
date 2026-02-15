@@ -6,10 +6,28 @@ import torch.nn.functional as F
 # YOLO11 / YOLOv8 Style Blocks
 # =============================================================================
 
+import timm
+
 def autopad(k, p=None, d=1):
     if d > 1: k = d * (k - 1) + 1 if isinstance(k, int) else [d * (x - 1) + 1 for x in k]
     if p is None: p = k // 2 if isinstance(k, int) else [x // 2 for x in k]
     return p
+
+class Concat(nn.Module):
+    def __init__(self, dimension=1):
+        super().__init__()
+        self.d = dimension
+    def forward(self, x):
+        return torch.cat(x, self.d)
+
+class TimmBackbone(nn.Module):
+    def __init__(self, model_name, pretrained=True, features_only=True, out_indices=(1, 2, 3, 4)):
+        super().__init__()
+        self.model = timm.create_model(model_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
+        self.feature_info = self.model.feature_info
+
+    def forward(self, x):
+        return self.model(x)
 
 class Conv(nn.Module):
     default_act = nn.SiLU()
