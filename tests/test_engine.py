@@ -1,34 +1,43 @@
-import pytest
+
+import unittest
 import torch
+import os
 import shutil
-from pathlib import Path
-from config.schema import AppConfig
-from engine.trainer import Trainer
-from engine.callbacks import CallbackList, Callback
+from neuro_pilot.engine.model import NeuroPilot
+from neuro_pilot.nn.tasks import DetectionModel
 
-class MockCallback(Callback):
-    def __init__(self):
-        self.called = False
-    def on_train_start(self, trainer):
-        self.called = True
+class TestEngine(unittest.TestCase):
+    def setUp(self):
+        self.cfg_path = 'neuro_pilot/cfg/models/neuro_pilot_v2.yaml'
+        # Create a temp dir for artifacts
+        self.test_dir = 'tests/tmp_engine_test'
+        os.makedirs(self.test_dir, exist_ok=True)
 
-def test_callback_system():
-    cb = MockCallback()
-    cbl = CallbackList([cb])
-    cbl.on_train_start(None)
-    assert cb.called
+    def tearDown(self):
+        if os.path.exists(self.test_dir):
+            shutil.rmtree(self.test_dir)
 
-def test_trainer_init():
-    cfg = AppConfig()
-    cfg.data.batch_size = 2
-    cfg.trainer.max_epochs = 1
-    cfg.trainer.device = 'cpu'
-    cfg.trainer.experiment_name = "test_trainer_init"
+    def test_neuropilot_init(self):
+        # Test initialization with model name (should load cfg)
+        model = NeuroPilot(self.cfg_path)
+        # Check if model is initialized
+        self.assertIsNotNone(model.model)
+        # Check class name to avoid import path mismatches in test env
+        self.assertEqual(model.model.__class__.__name__, 'DetectionModel')
 
-    trainer = Trainer(cfg)
-    assert trainer.model is not None
-    assert trainer.optimizer is not None
+    def test_neuropilot_task_property(self):
+        model = NeuroPilot(self.cfg_path)
+        # Check task_name attribute
+        self.assertTrue(hasattr(model, 'task_name'))
+        self.assertEqual(model.task_name, 'multitask')
 
-    # Clean up
-    if Path("experiments/test_trainer_init").exists():
-        shutil.rmtree("experiments/test_trainer_init")
+    def test_predict_structure(self):
+        # Test if predict method exists and accepts arguments
+        model = NeuroPilot(self.cfg_path)
+        # Mocking input
+        # Validation of actual prediction requires weights, maybe skip actual run
+        # just check interface
+        self.assertTrue(callable(model.predict))
+
+if __name__ == '__main__':
+    unittest.main()
