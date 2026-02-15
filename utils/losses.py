@@ -269,15 +269,26 @@ class DetectionLoss(nn.Module):
 
                 # Subset of distance matrix: (M_gt, N_pos)
                 d_sub = dist[:, pos_idx]
-                # For each positive anchor (dim 1), find closest GT (dim 0)
-                min_dist, gt_idx_for_pos = torch.min(d_sub, dim=0)
+                if d_sub.numel() > 0: # Ensure not empty
+                   # For each positive anchor (dim 1), find closest GT (dim 0)
+                   min_dist, gt_idx_for_pos = torch.min(d_sub, dim=0)
 
-                matched_tbox = tbox[gt_idx_for_pos]
+                   matched_tbox = tbox[gt_idx_for_pos]
 
-                iou = self.bbox_iou(pbox_pos, matched_tbox, CIoU=True)
-                loss_box += (1.0 - iou).mean()
+                   iou = self.bbox_iou(pbox_pos, matched_tbox, CIoU=True)
+                   loss_box += (1.0 - iou).mean()
 
-        return (loss_cls * self.alpha_class + loss_box * self.alpha_box) / batch_size
+        loss_cls = loss_cls / batch_size
+        loss_box = loss_box / batch_size
+
+        total_loss = loss_cls * self.alpha_class + loss_box * self.alpha_box
+
+        return {
+            'total': total_loss,
+            'box': loss_box,
+            'cls': loss_cls,
+            'obj': torch.tensor(0.0, device=device) # Placeholder for now as obj head not fully trained in this simplified logic
+        }
 
 
 class AdvancedCombinedLoss(BaseLoss):

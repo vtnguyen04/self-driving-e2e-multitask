@@ -1,1 +1,1 @@
-from .e2e_net import BFMCE2ENet
+from .net import BFMCE2ENet

@@ -27,7 +27,7 @@ class AverageMeter:
         self.avg = self.sum / self.count
 
     def __str__(self):
-        return f"{self.name} {self.val{self.fmt}} ({self.avg{self.fmt}})"
+        return f"{self.name} {self.val:{self.fmt}} ({self.avg:{self.fmt}})"
 
 class MetricLogger:
     """
