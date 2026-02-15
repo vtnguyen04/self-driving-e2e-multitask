@@ -1,0 +1,39 @@
+# BFMC E2E Model Configuration v2 (Fully YAML Defined)
+# Parameters
+nc: 14  # number of classes
+nm: 4   # number of commands
+nw: 10  # number of waypoints
+
+# Backbone
+# [from, repeats, module, args]
+backbone:
+  # Using TIMM backbone wrapper
+  # args: [model_name, pretrained, features_only]
+  - [-1, 1, TimmBackbone, ['mobilenetv4_conv_small.e2400_r224_in1k', True, True]] # 0
+
+# Head
+head:
+  # P5 Processing
+  - [0, 1, SelectFeature, [4]] # 1 (Select P5)
+  - [-1, 1, SPPF, [128, 5]]    # 2 (P5' -> SPPF)
+
+  # P4 Processing
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 3 (P5_up)
+  - [0, 1, SelectFeature, [3]]                  # 4 (Select P4 from backbone)
+  - [4, 1, Conv, [128, 1, 1]]                   # 5 (Adjust P4 channels "lat_c4")
+  - [[-1, 3], 1, Concat, [1]]                   # 6 (cat P4_lat, P5_up) -> Input to C3k2
+  - [-1, 1, C3k2, [128, 1]]                     # 7 (P4_neck)
+
+  # P3 Processing
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 8 (P4_neck_up)
+  - [0, 1, SelectFeature, [2]]                  # 9 (Select P3 from backbone)
+  - [9, 1, Conv, [128, 1, 1]]                   # 10 (Adjust P3 channels "lat_c3")
+  - [[-1, 8], 1, Concat, [1]]                   # 11 (cat P3_lat, P4_neck_up)
+  - [-1, 1, C3k2, [128, 1]]                     # 12 (P3_neck) ---> Output 1 for Detect, Heatmap
+
+  # Heads
+  - [0, 1, SelectFeature, [1]]                  # 13 (Select C2 from backbone)
+  - [[12, 13], 1, HeatmapHead, [1, 64]]         # 14 (Heatmap Output)
+  - [[2, 14], 1, TrajectoryHead, [4, 10, 128]]  # 15 (Trajectory Output)
+  - [[2], 1, ClassificationHead, [3]]           # 16 (New Task: Speed Limit)
+  - [[12, 7, 2], 1, Detect, [nc]]               # 17 (Detection Output)
