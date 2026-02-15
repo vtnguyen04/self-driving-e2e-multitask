@@ -20,15 +20,18 @@ class Sample(BaseModel):
 
 from neuro_pilot.data.augment import StandardAugmentor
 from neuro_pilot.data.utils import check_dataset, get_image_files, img2label_paths, parse_yolo_label
+from neuro_pilot.utils.logger import logger
 from PIL import Image
 
 class NeuroPilotDataset(Dataset):
-    def __init__(self, root_dir=None, split='train', transform=None, sequence_mode=False, samples=None, dataset_yaml=None):
+    def __init__(self, root_dir=None, split='train', transform=None, sequence_mode=False, samples=None, dataset_yaml=None, rect=False, imgsz=224):
         self.root_dir = Path(root_dir) if root_dir else None
         self.split = split
         self.transform = transform
         self.sequence_mode = sequence_mode # If True, returns (sample_t, sample_t1)
         self.dataset_yaml = dataset_yaml
+        self.rect = rect
+        self.imgsz = imgsz
 
         if samples is not None:
             self.samples = samples
@@ -353,6 +356,10 @@ class NeuroPilotDataset(Dataset):
 
         return data
 
+    @property
+    def collate_fn(self):
+        return custom_collate_fn
+
 def create_dummy_dataloader(config, sequence_mode=False):
     """Factory for testing."""
     # Create fake samples
@@ -446,6 +453,8 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
 
     print(f"Dataset split: {train_size} train, {val_size} val")
 
+    from neuro_pilot.data.build import build_dataloader
+
     # Create samplers
     if use_weighted_sampling:
         # Need to extract samples from Subset
@@ -457,38 +466,34 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
                 self.samples = samples
 
         sampler = get_weighted_sampler(TempDataset(train_samples))
-        train_loader = DataLoader(
+        train_loader = build_dataloader(
             train_dataset,
-            batch_size=config.data.batch_size,
+            batch=config.data.batch_size,
             sampler=sampler,
-            num_workers=config.data.num_workers,
+            workers=config.data.num_workers,
             pin_memory=True,
-            drop_last=True,
-            collate_fn=custom_collate_fn
+            drop_last=True
         )
     else:
-        train_loader = DataLoader(
+        train_loader = build_dataloader(
             train_dataset,
-            batch_size=config.data.batch_size,
+            batch=config.data.batch_size,
             shuffle=True,
-            num_workers=config.data.num_workers,
+            workers=config.data.num_workers,
             pin_memory=True,
-            drop_last=True,
-            collate_fn=custom_collate_fn
+            drop_last=True
         )
 
-    # Validation loader (no weighted sampling)
     # Validation loader (no weighted sampling)
     val_pipeline = StandardAugmentor(training=False, imgsz=config.data.image_size, config=config.data.augment)
     val_dataset.dataset.transform = val_pipeline  # Update transform for val
 
-    val_loader = DataLoader(
+    val_loader = build_dataloader(
         val_dataset,
-        batch_size=config.data.batch_size,
+        batch=config.data.batch_size,
         shuffle=False,
-        num_workers=config.data.num_workers,
-        pin_memory=True,
-        collate_fn=custom_collate_fn
+        workers=config.data.num_workers,
+        pin_memory=True
     )
 
     return train_loader, val_loader
