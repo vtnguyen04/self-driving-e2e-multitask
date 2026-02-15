@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>BFMC E2E Labeler // CYPHER</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #050505;
+            --panel-bg: #0d0d15;
+            --neon-green: #00ff41;
+            --neon-red: #ff003c;
+            --neon-cyan: #00f3ff;
+            --text-color: #e0e0e0;
+            --border-color: #333;
+        }
+
+        body {
+            display: flex;
+            font-family: 'Rajdhani', sans-serif;
+            height: 100vh;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+        }
+
+        h3, h4 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--neon-cyan);
+            margin-top: 0;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .sidebar {
+            width: 280px;
+            padding: 20px;
+            background: var(--panel-bg);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 2px 0 20px rgba(0, 243, 255, 0.1);
+            z-index: 10;
+            height: 100vh;
+            overflow-y: auto;
+            box-sizing: border-box;
+            flex-shrink: 0;
+        }
+
+        #left-sidebar { border-right: 1px solid var(--border-color); }
+        #right-sidebar { border-left: 1px solid var(--border-color); }
+
+        .control-group {
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .control-group h4 {
+            font-size: 1rem;
+            margin-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 5px;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            background: transparent;
+            color: var(--neon-cyan);
+            border: 1px solid var(--neon-cyan);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        button:hover {
+            background: rgba(0, 243, 255, 0.1);
+            box-shadow: 0 0 10px rgba(0, 243, 255, 0.4);
+        }
+
+        button.active {
+            background: var(--neon-cyan);
+            color: #000;
+            box-shadow: 0 0 15px var(--neon-cyan);
+            font-weight: bold;
+        }
+
+        button.danger {
+            color: var(--neon-red);
+            border-color: var(--neon-red);
+        }
+
+        button.danger:hover {
+            background: rgba(255, 0, 60, 0.1);
+            box-shadow: 0 0 10px rgba(255, 0, 60, 0.4);
+        }
+
+        button.success {
+            color: var(--neon-green);
+            border-color: var(--neon-green);
+        }
+
+        button.success:hover {
+            background: rgba(0, 255, 65, 0.1);
+            box-shadow: 0 0 10px rgba(0, 255, 65, 0.4);
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            background: #111;
+            border: 1px solid var(--border-color);
+            color: #fff;
+            font-family: 'Rajdhani', sans-serif;
+            font-size: 1rem;
+            margin-bottom: 5px;
+            box-sizing: border-box;
+        }
+
+        select:focus, input:focus {
+            outline: none;
+            border-color: var(--neon-cyan);
+        }
+
+        #fileList {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid var(--border-color);
+            background: #000;
+        }
+
+        .file-item {
+            padding: 8px;
+            cursor: pointer;
+            border-bottom: 1px solid #222;
+            font-size: 0.9rem;
+            transition: background 0.1s;
+        }
+
+        .file-item:hover {
+            background: #222;
+            color: var(--neon-cyan);
+        }
+
+        .file-item.selected {
+            background: rgba(0, 243, 255, 0.2);
+            border-left: 3px solid var(--neon-cyan);
+            color: #fff;
+        }
+
+        .labeled-check {
+            float: right;
+            color: var(--neon-green);
+            text-shadow: 0 0 5px var(--neon-green);
+        }
+
+        #main {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            background-image:
+                linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+
+        canvas {
+            border: 1px solid var(--neon-cyan);
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
+            cursor: crosshair;
+        }
+
+        #status {
+            height: 20px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #000; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--neon-cyan); }
+    </style>
+</head>
+<body>
+
+<div id="left-sidebar" class="sidebar">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>BFMC Labeler</h3>
+        <span style="font-size:0.7rem; color:#666;">v2.2 SPLIT</span>
+    </div>
+
+    <div class="control-group">
+        <h4>Dataset Index</h4>
+        <div style="display:flex; gap:2px; margin-bottom:5px;">
+            <button id="btnFilterAll" class="active" style="padding:4px; font-size:0.7rem;" onclick="setFilter('all')">ALL</button>
+            <button id="btnFilterLbl" style="padding:4px; font-size:0.7rem;" onclick="setFilter('labeled')">LBL</button>
+            <button id="btnFilterUnlbl" style="padding:4px; font-size:0.7rem;" onclick="setFilter('unlabeled')">UNLBL</button>
+        </div>
+        <div id="fileList"></div>
+    </div>
+
+    <div class="control-group">
+        <h4>Mode Select</h4>
+        <div style="display:flex; gap:5px;">
+            <button id="btnModeBox" class="active">BOXES</button>
+            <button id="btnModePoints">POINTS</button>
+            <button id="btnTemplates">TMPL</button>
+        </div>
+        <div style="display:flex; gap:5px; margin-top:5px;">
+             <button id="btnUndo" style="flex:1;">UNDO (Ctrl+Z)</button>
+             <button id="btnClear" style="flex:1;">CLEAR</button>
+        </div>
+    </div>
+</div>
+
+<div id="main">
+    <canvas id="c" width="896" height="896"></canvas>
+
+    <!-- Floating Label Editor -->
+    <div id="floatLabelEditor" style="display:none; position:absolute; background: rgba(0,0,0,0.9); padding:8px; border:1px solid #00ff41; box-shadow: 0 0 15px #00ff41; border-radius:4px; z-index:100; min-width: 150px;">
+        <h4 style="font-size:0.8rem; margin:0 0 5px 0; color:#00ff41;">EDIT LABEL</h4>
+        <select id="floatClsSelect" style="margin-bottom:5px; font-size:0.9rem; padding:4px;">
+             <!-- Options populated by JS -->
+        </select>
+        <div style="display:flex; margin-top:5px; gap:5px;">
+             <button id="btnFloatConfirm" class="success" style="font-size:0.8rem; padding:5px;">OK</button>
+             <button id="btnFloatDelete" class="danger" style="font-size:0.8rem; padding:5px;">DEL</button>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Delete Modal -->
+<div id="bulkDeleteModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; justify-content:center; align-items:center;">
+    <div style="background:#0d0d15; border:2px solid #ff003c; border-radius:8px; padding:20px; max-width:600px; width:90%; max-height:80vh; display:flex; flex-direction:column;">
+        <h3 style="color:#ff003c; margin:0 0 10px 0;">BULK DELETE</h3>
+        <div style="display:flex; gap:10px; margin-bottom:10px;">
+            <button id="btnSelectAll" style="padding:5px 10px; font-size:0.8rem;">SELECT ALL</button>
+            <button id="btnDeselectAll" style="padding:5px 10px; font-size:0.8rem;">DESELECT ALL</button>
+            <button id="btnSelectUnlabeled" style="padding:5px 10px; font-size:0.8rem;">SELECT UNLABELED</button>
+        </div>
+        <div id="bulkFileList" style="flex:1; overflow-y:auto; border:1px solid #333; background:#000; padding:10px; max-height:400px;"></div>
+        <div style="display:flex; gap:10px; margin-top:15px;">
+            <button id="btnConfirmBulkDelete" class="danger" style="flex:1; padding:15px; font-size:1rem;">DELETE SELECTED (<span id="selectedCount">0</span>)</button>
+            <button id="btnCancelBulkDelete" style="flex:1; padding:15px; font-size:1rem;">CANCEL</button>
+        </div>
+    </div>
+</div>
+
+<div id="right-sidebar" class="sidebar">
+    <div class="control-group" id="boxControls">
+        <h4>Active Object</h4>
+        <div style="display:flex; gap:5px; margin-bottom:5px;">
+            <select id="clsSelect">
+                 <!-- Populated by JS -->
+            </select>
+            <button id="btnAddClassBtn" style="width:40px; padding:0;">+</button>
+        </div>
+
+        <div id="addClassContainer" style="display:none; margin-bottom:10px;">
+            <input type="text" id="newClassInput" placeholder="Enter Class Name">
+            <button id="btnConfirmAddClass" class="active">CONFIRM</button>
+        </div>
+
+        <button id="btnDeleteSelectedBox" class="danger" style="display:none;">DELETE SELECTED [DEL]</button>
+        <div style="font-size:0.8rem; color:#777; margin-top:5px; text-align:center;">
+            Click box for Instant Edit
+        </div>
+    </div>
+
+    <div class="control-group" id="templateControls" style="display:none;">
+        <h4>Bezier Templates</h4>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px;">
+            <button onclick="spawnTemplate('straight')">Straight</button>
+            <button onclick="spawnTemplate('left')">Left</button>
+            <button onclick="spawnTemplate('right')">Right</button>
+        </div>
+    </div>
+
+    <div class="control-group">
+        <h4>Scene Command</h4>
+        <select id="cmdSelect">
+            <option value="0">Follow Lane</option>
+            <option value="1">Turn Left</option>
+            <option value="2">Turn Right</option>
+            <option value="3">Go Straight</option>
+        </select>
+    </div>
+
+    <div class="control-group">
+        <h4>Keyboard Shortcuts</h4>
+        <div style="font-size:0.75rem; line-height:1.6; color:#aaa;">
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">←/→</span> Previous/Next Image</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Ctrl+S</span> Save Label</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Ctrl+Z</span> Undo</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Del</span> Delete Selected</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Shift+Drag</span> Select Waypoints</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Alt+Click</span> Pan Canvas</div>
+            <div style="margin-bottom:3px;"><span style="color:var(--neon-cyan);">Scroll</span> Zoom In/Out</div>
+        </div>
+    </div>
+
+    <div style="margin-top:auto; padding-top:20px;">
+        <div id="status"></div>
+        <button id="btnSave" class="success" style="font-size:1.1rem; padding:15px;">SAVE LABEL</button>
+        <button id="btnDuplicate" style="margin-top:10px; color:#aaa; border-color:#555;">DUPLICATE IMAGE</button>
+        <button id="btnUnlabel" class="danger" style="margin-top:5px; opacity:0.7;">RESET / UNLABEL</button>
+        <button id="btnDeleteFile" class="danger" style="margin-top:20px; border:2px solid #ff003c; font-weight:bold;">DELETE FILE PERMANENTLY</button>
+        <button id="btnBulkDelete" class="danger" style="margin-top:5px; opacity:0.8;">BULK DELETE...</button>
+    </div>
+</div>
+
+<script>
+    // --- Constants ---
+    const NUM_WAYPOINTS = 10;
+    const CANVAS_SIZE = 896;
+    const IMG_SIZE = 224;
+    const SCALE = CANVAS_SIZE / IMG_SIZE;
+
+    // --- State ---
+    let currentFile = null;
+    let points = [];
+    let bboxes = [];
+    let templateMode = false;
+    let boxMode = true;
+    let activeTemplate = null;
+    let activeTemplateType = null;
+    let draggingPointIdx = -1;
+    let isGroupDragging = false;
+    let groupDragPrev = {x: 0, y: 0};
+    let isDrawingBox = false;
+    let boxStart = null;
+    let selectedBoxIdx = -1;
+    let imageObj = new Image();
+
+    // Image Cache with LRU eviction (keep last 10 images)
+    const IMAGE_CACHE_SIZE = 10;
+    const imageCache = new Map(); // filename -> Image object
+    const cacheOrder = []; // Track access order for LRU
+
+    function getCachedImage(filename) {
+        if (imageCache.has(filename)) {
+            // Move to end (most recently used)
+            const idx = cacheOrder.indexOf(filename);
+            if (idx > -1) cacheOrder.splice(idx, 1);
+            cacheOrder.push(filename);
+            return imageCache.get(filename);
+        }
+        return null;
+    }
+
+    function cacheImage(filename, imgObj) {
+        // Evict oldest if cache is full
+        if (imageCache.size >= IMAGE_CACHE_SIZE && !imageCache.has(filename)) {
+            const oldest = cacheOrder.shift();
+            const oldImg = imageCache.get(oldest);
+            if (oldImg) oldImg.src = ''; // Free memory
+            imageCache.delete(oldest);
+        }
+
+        imageCache.set(filename, imgObj);
+        cacheOrder.push(filename);
+    }
+
+    // Preload adjacent images in background
+    function preloadAdjacentImages() {
+        if (!currentFile || allFiles.length === 0) return;
+
+        const filtered = allFiles.filter(f => {
+            if(filterMode === 'all') return true;
+            if(filterMode === 'labeled') return f.labeled;
+            if(filterMode === 'unlabeled') return !f.labeled;
+            return true;
+        });
+
+        const currentIndex = filtered.findIndex(f => f.name === currentFile);
+        if (currentIndex === -1) return;
+
+        // Preload next 2 and previous 2 images
+        const toPreload = [];
+        for (let offset of [-2, -1, 1, 2]) {
+            let idx = currentIndex + offset;
+            if (idx >= 0 && idx < filtered.length) {
+                toPreload.push(filtered[idx].name);
+            }
+        }
+
+        toPreload.forEach(filename => {
+            if (!imageCache.has(filename)) {
+                const img = new Image();
+                img.src = `/api/image/${filename}`;
+                img.onload = () => cacheImage(filename, img);
+                img.onerror = () => console.warn(`Preload failed: ${filename}`);
+            }
+        });
+    }
+
+
+    // Zoom & Pan State
+    let viewScale = 1.0;
+    let viewOffset = {x: 0, y: 0};
+    let isPanning = false;
+    let panStart = {x: 0, y: 0};
+
+    // Responsive Logic
+    const mainDiv = document.getElementById('main');
+
+    function resizeCanvas() {
+        // Fit canvas to main container (keep square)
+        const w = mainDiv.clientWidth;
+        const h = mainDiv.clientHeight;
+        const size = Math.min(w, h) - 40; // 20px padding
+
+        canvas.style.width = size + 'px';
+        canvas.style.height = size + 'px';
+    }
+
+    // Watch for resize
+    new ResizeObserver(resizeCanvas).observe(mainDiv);
+
+    // Coordinate Transforms
+    // Coordinate Transforms
+    // INPUT: Visual Offset X,Y (offsetX) -> Logical Canvas X,Y (0..896) -> World X,Y (View)
+    function toWorld(visualX, visualY) {
+        // Use clientWidth to exclude borders (Robust Scaling)
+        // If clientWidth is 0 (hidden), fallback to safe var to avoid NaN
+        const vW = canvas.clientWidth || 1;
+        const vH = canvas.clientHeight || 1;
+
+        // 1. Visual -> Canvas Logical (0..896)
+        const scaleX = CANVAS_SIZE / vW;
+        const scaleY = CANVAS_SIZE / vH;
+
+        const logicalX = visualX * scaleX;
+        const logicalY = visualY * scaleY;
+
+        // 2. Canvas Logical -> World (Pan/Zoom)
+        return {
+            x: (logicalX - viewOffset.x) / viewScale,
+            y: (logicalY - viewOffset.y) / viewScale
+        };
+    }
+
+    function toScreen(wx, wy) {
+        // Visual Coords Relative to Canvas Content (inside border)
+        const vW = canvas.clientWidth || 1;
+        const vH = canvas.clientHeight || 1;
+        const scaleX = vW / CANVAS_SIZE;
+        const scaleY = vH / CANVAS_SIZE;
+
+        // Logical Coords
+        const logicalX = wx * viewScale + viewOffset.x;
+        const logicalY = wy * viewScale + viewOffset.y;
+
+        return {
+            x: logicalX * scaleX,
+            y: logicalY * scaleY
+        };
+    }
+
+    // History
+    let history = [];
+    const MAX_HISTORY = 50;
+
+    function pushHistory() {
+        const state = {
+            points: JSON.parse(JSON.stringify(points)),
+            bboxes: JSON.parse(JSON.stringify(bboxes)),
+            templateMode: templateMode,
+            activeTemplate: activeTemplate ? JSON.parse(JSON.stringify(activeTemplate)) : null
+        };
+        history.push(state);
+        if (history.length > MAX_HISTORY) history.shift();
+    }
+
+    function popHistory() {
+        if (history.length === 0) return;
+        const state = history.pop();
+        points = state.points;
+        bboxes = state.bboxes;
+        templateMode = state.templateMode;
+        activeTemplate = state.activeTemplate;
+        selectedBoxIdx = -1;
+        hideFloatEditor();
+        draw();
+    }
+
+    // --- Custom Classes Management ---
+    let customClasses = JSON.parse(localStorage.getItem('customClasses') || '[]');
+
+    function updateClassSelects() {
+        const selects = [document.getElementById('clsSelect'), document.getElementById('floatClsSelect')];
+        const defaults = ["Stop Sign", "Traffic Light", "Pedestrian", "Car", "Priority Sign", "Crosswalk"];
+
+        selects.forEach(sel => {
+            sel.innerHTML = ''; // Clear
+            defaults.forEach((d, i) => {
+                const opt = document.createElement('option');
+                opt.value = i;
+                opt.text = d.toUpperCase();
+                sel.appendChild(opt);
+            });
+            customClasses.forEach((clsName, idx) => {
+                 const opt = document.createElement('option');
+                 opt.value = 6 + idx;
+                 opt.text = clsName.toUpperCase();
+                 sel.appendChild(opt);
+            });
+        });
+    }
+
+    // Initialize Selects
+    updateClassSelects();
+
+    document.getElementById('btnAddClassBtn').onclick = () => {
+        const cont = document.getElementById('addClassContainer');
+        cont.style.display = cont.style.display === 'none' ? 'block' : 'none';
+        if(cont.style.display === 'block') document.getElementById('newClassInput').focus();
+    };
+
+    document.getElementById('btnConfirmAddClass').onclick = () => {
+        const name = document.getElementById('newClassInput').value.trim();
+        if (name) {
+            customClasses.push(name);
+            localStorage.setItem('customClasses', JSON.stringify(customClasses));
+            updateClassSelects();
+            // Select new class
+            const val = 6 + customClasses.length - 1;
+            document.getElementById('clsSelect').value = val;
+            document.getElementById('floatClsSelect').value = val;
+            document.getElementById('newClassInput').value = '';
+            document.getElementById('addClassContainer').style.display = 'none';
+        }
+    };
+
+    // Sync Selects (Sidebar -> Data)
+    document.getElementById('clsSelect').onchange = () => {
+        if (selectedBoxIdx !== -1) {
+            pushHistory();
+            bboxes[selectedBoxIdx].cls = parseInt(document.getElementById('clsSelect').value);
+            draw();
+        }
+    };
+
+    // --- Floating Editor Logic ---
+    function showFloatEditor(idx, x, y) {
+        const editor = document.getElementById('floatLabelEditor');
+        const canvasRect = canvas.getBoundingClientRect();
+        const mainRect = document.getElementById('main').getBoundingClientRect();
+
+        const offsetX = canvasRect.left - mainRect.left;
+        const offsetY = canvasRect.top - mainRect.top;
+
+        editor.style.display = 'block';
+        editor.style.left = (offsetX + x) + 'px';
+        editor.style.top = (offsetY + y - 80) + 'px'; // 80px above
+
+        const sel = document.getElementById('floatClsSelect');
+        sel.value = bboxes[idx].cls;
+        sel.focus();
+
+        sel.onchange = () => {
+            pushHistory();
+            bboxes[idx].cls = parseInt(sel.value);
+            document.getElementById('clsSelect').value = sel.value; // Sync sidebar
+            draw();
+        };
+
+        const confirmBtn = document.getElementById('btnFloatConfirm');
+        confirmBtn.onclick = () => {
+             hideFloatEditor();
+        };
+
+        const msHandler = (e) => { // prevent box drawing when clicking editor
+            e.stopPropagation();
+        };
+        editor.onmousedown = msHandler;
+
+        document.getElementById('btnFloatDelete').onclick = () => {
+            pushHistory();
+            bboxes.splice(idx, 1);
+            selectedBoxIdx = -1;
+            hideFloatEditor();
+            draw();
+        };
+    }
+
+    function hideFloatEditor() {
+        document.getElementById('floatLabelEditor').style.display = 'none';
+    }
+
+    // --- Templates ---
+    // --- Templates ---
+    function spawnTemplate(type) {
+        pushHistory();
+        activeTemplateType = type;
+        const cx = 448; // Center of 896x896
+        if (type === 'straight') {
+             activeTemplate = {
+                 p0: {x: cx, y: 850}, p1: {x: cx, y: 650},
+                 p2: {x: cx, y: 450}, p3: {x: cx, y: 250}
+             };
+        } else if (type === 'left') {
+             activeTemplate = {
+                 p0: {x: cx, y: 850}, p1: {x: cx, y: 650},
+                 p2: {x: cx-200, y: 450}, p3: {x: 100, y: 450}
+             };
+        } else if (type === 'right') {
+             activeTemplate = {
+                 p0: {x: cx, y: 850}, p1: {x: cx, y: 650},
+                 p2: {x: cx+200, y: 450}, p3: {x: 796, y: 450}
+             };
+        }
+        points = []; // Clear points when template is active? Or allow mix? Usually template replaces points.
+        templateMode = true;
+        draw();
+    }
+
+
+    // --- Math Utils ---
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+
+    function solveCatmullRom(p0, p1, p2, p3, t) {
+        const t2 = t * t; const t3 = t2 * t;
+        const f0 = -0.5*t3 + t2 - 0.5*t;
+        const f1 = 1.5*t3 - 2.5*t2 + 1.0;
+        const f2 = -1.5*t3 + 2.0*t2 + 0.5*t;
+        const f3 = 0.5*t3 - 0.5*t2;
+        return { x: p0.x*f0 + p1.x*f1 + p2.x*f2 + p3.x*f3, y: p0.y*f0 + p1.y*f1 + p2.y*f2 + p3.y*f3 };
+    }
+
+    function getSplinePoints(ctrlPoints, numOut) {
+        if (ctrlPoints.length < 2) return ctrlPoints;
+        const p = [...ctrlPoints]; p.unshift(ctrlPoints[0]); p.push(ctrlPoints[ctrlPoints.length-1]);
+        let path = []; const denseSteps = 50;
+        for (let i = 0; i < p.length - 3; i++) {
+            for (let j = 0; j < denseSteps; j++) {
+                path.push(solveCatmullRom(p[i], p[i+1], p[i+2], p[i+3], j/denseSteps));
+            }
+        }
+        path.push(p[p.length-2]);
+        return resamplePath(path, numOut);
+    }
+
+    function getBezierPoints(p0, p1, p2, p3, numOut) {
+         let dense = [];
+         for(let i=0; i<=100; i++){
+             let t = i/100;
+             let x = Math.pow(1-t,3)*p0.x + 3*Math.pow(1-t,2)*t*p1.x + 3*(1-t)*Math.pow(t,2)*p2.x + Math.pow(t,3)*p3.x;
+             let y = Math.pow(1-t,3)*p0.y + 3*Math.pow(1-t,2)*t*p1.y + 3*(1-t)*Math.pow(t,2)*p2.y + Math.pow(t,3)*p3.y;
+             dense.push({x,y});
+         }
+         return resamplePath(dense, numOut);
+    }
+
+    function resamplePath(path, numOut) {
+        let lengths = [0]; let totalLen = 0;
+        for (let i = 1; i < path.length; i++) {
+            totalLen += Math.hypot(path[i].x - path[i-1].x, path[i].y - path[i-1].y);
+            lengths.push(totalLen);
+        }
+        let result = []; const step = totalLen / (numOut - 1);
+        for (let i = 0; i < numOut; i++) {
+            const targetDist = i * step;
+            let idx = 0; while (lengths[idx] < targetDist && idx < lengths.length - 1) idx++;
+            if (idx <= 0) result.push(path[0]);
+            else {
+                const ratio = (targetDist - lengths[idx-1]) / (lengths[idx] - lengths[idx-1]);
+                const pA = path[idx-1]; const pB = path[idx];
+                result.push({ x: pA.x + (pB.x - pA.x) * ratio, y: pA.y + (pB.y - pA.y) * ratio });
+            }
+        }
+        return result;
+    }
+
+    // Render Optimization: Use requestAnimationFrame and dirty flag
+    let drawScheduled = false;
+    let isDirty = true;
+
+    function requestDraw() {
+        if (!drawScheduled) {
+            drawScheduled = true;
+            isDirty = true;
+            requestAnimationFrame(() => {
+                if (isDirty) {
+                    drawImmediate();
+                    isDirty = false;
+                }
+                drawScheduled = false;
+            });
+        }
+    }
+
+    // --- Draw Loop ---
+    function drawImmediate() {
+        ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+        ctx.save();
+        // Apply Zoom & Pan
+        ctx.translate(viewOffset.x, viewOffset.y);
+        ctx.scale(viewScale, viewScale);
+
+        if (imageObj.src) ctx.drawImage(imageObj, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+        // Always draw path logic first, then boxes, then Points on top
+        let finalPath = [];
+
+        // Bezier/Points Calculation
+        if (templateMode && activeTemplate) {
+            ctx.strokeStyle = '#00f3ff'; ctx.lineWidth = 1/viewScale; ctx.setLineDash([5/viewScale, 5/viewScale]);
+            [activeTemplate.p0, activeTemplate.p1, activeTemplate.p2, activeTemplate.p3].forEach(p => {
+                ctx.beginPath(); ctx.arc(p.x, p.y, 4/viewScale, 0, Math.PI*2); ctx.stroke();
+            });
+            ctx.beginPath(); ctx.moveTo(activeTemplate.p0.x, activeTemplate.p0.y); ctx.lineTo(activeTemplate.p1.x, activeTemplate.p1.y); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(activeTemplate.p3.x, activeTemplate.p3.y); ctx.lineTo(activeTemplate.p2.x, activeTemplate.p2.y); ctx.stroke();
+            ctx.setLineDash([]);
+            finalPath = getBezierPoints(activeTemplate.p0, activeTemplate.p1, activeTemplate.p2, activeTemplate.p3, NUM_WAYPOINTS);
+        } else if (points.length >= 2) {
+           finalPath = getSplinePoints(points, NUM_WAYPOINTS);
+        }
+
+        // Draw Path (Layer 1)
+        if (finalPath.length > 0) {
+            ctx.strokeStyle = '#00ff41'; ctx.lineWidth = 4/viewScale; ctx.shadowColor = '#00ff41'; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.moveTo(finalPath[0].x, finalPath[0].y);
+            for(let i=1; i<finalPath.length; i++) ctx.lineTo(finalPath[i].x, finalPath[i].y);
+            ctx.stroke(); ctx.shadowBlur = 0;
+            ctx.fillStyle = '#00ff41';
+            finalPath.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 2/viewScale, 0, Math.PI*2); ctx.fill(); });
+        }
+
+        // Draw Waypoint Selection Logic (Shift+Drag)
+        if (isSelecting && selectionRect) {
+             const selX = (selectionRect.x - viewOffset.x) / viewScale;
+             const selY = (selectionRect.y - viewOffset.y) / viewScale;
+             const selW = selectionRect.w / viewScale;
+             const selH = selectionRect.h / viewScale;
+
+             ctx.save();
+             ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 1/viewScale; ctx.setLineDash([4/viewScale, 4/viewScale]);
+             ctx.strokeRect(selX, selY, selW, selH);
+             ctx.fillStyle = 'rgba(255, 255, 0, 0.1)';
+             ctx.fillRect(selX, selY, selW, selH);
+             ctx.restore();
+        }
+
+        // Draw BBoxes (Layer 2)
+        bboxes.forEach((box, idx) => {
+            const isSelected = (idx === selectedBoxIdx);
+
+            ctx.strokeStyle = isSelected ? '#ffcc00' : '#00f3ff';
+            ctx.lineWidth = (isSelected ? 3 : 2) / viewScale;
+
+            if (isSelected) { ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 10; }
+            else { ctx.shadowColor = '#00f3ff'; ctx.shadowBlur = 5; }
+
+            ctx.strokeRect(box.x, box.y, box.w, box.h);
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = isSelected ? '#ffcc00' : '#00f3ff';
+            ctx.font = `bold ${12/viewScale}px "Orbitron"`;
+
+            let clsName = "?";
+            const sel = document.getElementById('clsSelect');
+            for(let i=0; i<sel.options.length; i++) {
+                if(parseInt(sel.options[i].value) === box.cls) clsName = sel.options[i].text;
+            }
+            const labelStr = `${clsName}`;
+            const textWidth = ctx.measureText(labelStr).width;
+
+            // Smart Label Visibility: Clamp to view
+            let textY = box.y - (16/viewScale);
+            // Check if top edge is off-screen (approximately)
+            // Simple logic: if box is near top 0, flip down?
+            if (textY < 0) textY = box.y + box.h + (16/viewScale);
+
+            ctx.fillRect(box.x, textY, textWidth + (4/viewScale), (16/viewScale));
+            ctx.fillStyle = '#000';
+            ctx.fillText(labelStr, box.x + (2/viewScale), textY + (12/viewScale));
+        });
+
+        if (isDrawingBox && boxStart) {
+            ctx.strokeStyle = '#fff'; ctx.setLineDash([5/viewScale, 5/viewScale]); ctx.lineWidth = 2/viewScale;
+            ctx.strokeRect(boxStart.x, boxStart.y, boxStart.w, boxStart.h);
+            ctx.setLineDash([]);
+        }
+
+        // Draw Points (Layer 3 - Always Visible)
+        // Even in box mode, we show red dots so user can see them
+        if (!templateMode && points.length > 0) {
+            points.forEach((p, i) => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 5/viewScale, 0, Math.PI*2);
+
+                // Highlight Selected Points
+                if (selectedPointIndices.has(i)) {
+                    ctx.fillStyle = '#ffff00'; // Yellow
+                } else {
+                    ctx.fillStyle = '#ff003c'; // Red
+                }
+                ctx.fill();
+            });
+        }
+
+        ctx.restore();
+    }
+
+    // Public draw function that uses requestAnimationFrame
+    function draw() {
+        requestDraw();
+    }
+
+    // --- Interactions ---
+    function updateModeButtons() {
+        document.getElementById('btnModePoints').classList.remove('active');
+        document.getElementById('btnTemplates').classList.remove('active');
+        document.getElementById('btnModeBox').classList.remove('active');
+
+        document.getElementById('boxControls').style.display = 'none';
+        document.getElementById('templateControls').style.display = 'none';
+
+        if (boxMode) {
+            document.getElementById('btnModeBox').classList.add('active');
+            document.getElementById('boxControls').style.display = 'block';
+        } else if (templateMode) {
+            document.getElementById('btnTemplates').classList.add('active');
+            document.getElementById('templateControls').style.display = 'block';
+        } else {
+            document.getElementById('btnModePoints').classList.add('active');
+        }
+    }
+
+    document.getElementById('btnModeBox').onclick = () => { boxMode=true; templateMode=false; selectedBoxIdx=-1; hideFloatEditor(); updateModeButtons(); draw(); };
+    document.getElementById('btnTemplates').onclick = () => { boxMode=false; templateMode=true; selectedBoxIdx=-1; hideFloatEditor(); updateModeButtons(); if(!activeTemplate) spawnTemplate('straight'); draw(); };
+    document.getElementById('btnModePoints').onclick = () => { boxMode=false; templateMode=false; selectedBoxIdx=-1; activeTemplate=null; hideFloatEditor(); updateModeButtons(); draw(); };
+
+    // Waypoint Selection State
+    let isSelecting = false;
+    let selectionRect = null; // {x, y, w, h} in Screen Coords for drawing, but logic uses World
+    let selectionStart = null;
+    let selectedPointIndices = new Set();
+
+    // Deletion Logic
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (selectedPointIndices.size > 0) {
+                 pushHistory();
+                 // Sort indices descending to splice correctly
+                 const indices = Array.from(selectedPointIndices).sort((a,b)=>b-a);
+                 indices.forEach(idx => points.splice(idx, 1));
+                 selectedPointIndices.clear();
+                 draw();
+            } else if (selectedBoxIdx !== -1) {
+                // Existing Box Delete
+                pushHistory();
+                bboxes.splice(selectedBoxIdx, 1);
+                selectedBoxIdx = -1;
+                hideFloatEditor();
+                draw();
+            }
+        }
+        // Undo
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            popHistory();
+        }
+        // Save
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            console.log('Ctrl+S detected!');
+            e.preventDefault();
+            e.stopPropagation();
+            save();
+            return false;
+        }
+    });
+
+    canvas.addEventListener('mousedown', e => {
+        const world = toWorld(e.offsetX, e.offsetY);
+        const wx = world.x; const wy = world.y;
+
+        // Pan Logic (Middle Click or Alt + Click)
+        if (e.button === 1 || (e.button === 0 && e.altKey)) {
+            isPanning = true;
+            panStart = {x: e.offsetX, y: e.offsetY};
+            canvas.style.cursor = 'grabbing';
+            return;
+        }
+
+        // Waypoint Selection Logic (Shift + Click)
+        if (e.shiftKey && !boxMode && !templateMode) {
+            isSelecting = true;
+            selectionStart = {x: e.offsetX, y: e.offsetY};
+            selectionRect = {x: 0, y: 0, w: 0, h: 0};
+            return;
+        }
+
+        // Normal Interaction
+        // If template mode, always prioritize handles
+        if (templateMode && activeTemplate) {
+            const handles = [activeTemplate.p0, activeTemplate.p1, activeTemplate.p2, activeTemplate.p3];
+            for (let i=0; i<4; i++) {
+                if (Math.hypot(handles[i].x-wx, handles[i].y-wy) < 15/viewScale) { draggingPointIdx = i; return; }
+            }
+        }
+        else if (!boxMode) {
+            // Point mode priority
+             for (let i=0; i<points.length; i++) {
+                  if (Math.hypot(points[i].x-wx, points[i].y-wy) < 10/viewScale) {
+                      draggingPointIdx = i;
+
+                      // Check Group Drag: If clicking a selected point, prepare group drag
+                      if (selectedPointIndices.has(i)) {
+                          isGroupDragging = true;
+                          groupDragPrev = {x: wx, y: wy};
+                      } else {
+                          // If clicking an existing point WITHOUT Shift, clear selection
+                          if (!e.shiftKey) selectedPointIndices.clear();
+                      }
+
+                      draw();
+                      return;
+                  }
+             }
+        }
+
+        if (boxMode) {
+             // Check box selection
+             let found = -1;
+             for (let i=bboxes.length-1; i>=0; i--) {
+                 const b = bboxes[i];
+                 if (wx >= b.x && wx <= b.x + b.w && wy >= b.y && wy <= b.y + b.h) { found = i; break; }
+             }
+             if (found !== -1) {
+                 selectedBoxIdx = found;
+                 // Sync Sidebar
+                 document.getElementById('clsSelect').value = bboxes[found].cls;
+                 // Show Float Editor (Convert World -> Screen for UI)
+                 const screenPos = toScreen(bboxes[found].x, bboxes[found].y);
+                 showFloatEditor(found, screenPos.x, screenPos.y);
+                 draw();
+                 return;
+             }
+
+             // If clicked empty space, start drawing
+             selectedBoxIdx = -1;
+             hideFloatEditor();
+             isDrawingBox = true;
+             boxStart = {x: wx, y: wy, w:0, h:0};
+             draw();
+             return;
+        }
+
+        if (!boxMode && !templateMode && !isPanning && !isSelecting) {
+             pushHistory();
+             points.push({x: wx, y: wy});
+             draw();
+        }
+    });
+
+    // Debounce mousemove for better performance
+    let mouseMoveTimeout = null;
+    canvas.addEventListener('mousemove', e => {
+        const world = toWorld(e.offsetX, e.offsetY);
+        // Clamp to Canvas Boundaries
+        const wx = Math.max(0, Math.min(CANVAS_SIZE, world.x));
+        const wy = Math.max(0, Math.min(CANVAS_SIZE, world.y));
+
+        if (isPanning) {
+            const vW = canvas.clientWidth || 1;
+            const scaleX = CANVAS_SIZE / vW;
+
+            const dx = (e.offsetX - panStart.x) * scaleX;
+            const dy = (e.offsetY - panStart.y) * scaleX;
+
+            viewOffset.x += dx;
+            viewOffset.y += dy;
+            panStart = {x: e.offsetX, y: e.offsetY};
+            draw();
+            return;
+        }
+
+        if (isSelecting && selectionStart) {
+             const startVisX = selectionStart.x;
+             const startVisY = selectionStart.y;
+             const currVisX = e.offsetX;
+             const currVisY = e.offsetY;
+
+             // Visual Rect
+             const w = currVisX - startVisX;
+             const h = currVisY - startVisY;
+
+             const vW = canvas.clientWidth || 1;
+             const vH = canvas.clientHeight || 1;
+             const scaleX = CANVAS_SIZE / vW;
+             const scaleY = CANVAS_SIZE / vH;
+
+             const lStartX = startVisX * scaleX;
+             const lStartY = startVisY * scaleY;
+             const lCurrX = currVisX * scaleX;
+             const lCurrY = currVisY * scaleY;
+
+             const lw = lCurrX - lStartX;
+             const lh = lCurrY - lStartY;
+
+             selectionRect = {
+                 x: lw < 0 ? lCurrX : lStartX,
+                 y: lh < 0 ? lCurrY : lStartY,
+                 w: Math.abs(lw),
+                 h: Math.abs(lh)
+             };
+             draw();
+             return;
+        }
+
+        if (boxMode && isDrawingBox) {
+             boxStart.w = wx - boxStart.x;
+             boxStart.h = wy - boxStart.y;
+             draw();
+             return;
+        }
+        if (draggingPointIdx !== -1) {
+            if (templateMode) {
+                 if(draggingPointIdx===0) activeTemplate.p0 = {x: wx, y: wy};
+                 if(draggingPointIdx===1) activeTemplate.p1 = {x: wx, y: wy};
+                 if(draggingPointIdx===2) activeTemplate.p2 = {x: wx, y: wy};
+                 if(draggingPointIdx===3) activeTemplate.p3 = {x: wx, y: wy};
+
+                 // Smart Stretch for Straight Line
+                 if (activeTemplateType === 'straight') {
+                     const p0 = activeTemplate.p0;
+                     const p3 = activeTemplate.p3;
+
+                     // If moving endpoints, interpolate intermediates
+                     if (draggingPointIdx === 0 || draggingPointIdx === 3) {
+                         activeTemplate.p1 = {
+                             x: p0.x + (p3.x - p0.x) * 0.33,
+                             y: p0.y + (p3.y - p0.y) * 0.33
+                         };
+                         activeTemplate.p2 = {
+                             x: p0.x + (p3.x - p0.x) * 0.66,
+                             y: p0.y + (p3.y - p0.y) * 0.66
+                         };
+                     }
+                     // If moving intermediates? Maybe restrict or allow bending (user might want to curve a straight line manually)
+                     // For now, allow bending if they grab P1/P2 directly.
+                 }
+
+             } else {
+                 if (isGroupDragging) {
+                     // Apply Delta to all selected points
+                     const dx = wx - groupDragPrev.x;
+                     const dy = wy - groupDragPrev.y;
+
+                     selectedPointIndices.forEach(idx => {
+                         points[idx].x += dx;
+                         points[idx].y += dy;
+                         // Clamp (ensure group stays valid)
+                         points[idx].x = Math.max(0, Math.min(CANVAS_SIZE, points[idx].x));
+                         points[idx].y = Math.max(0, Math.min(CANVAS_SIZE, points[idx].y));
+                     });
+
+                     groupDragPrev = {x: wx, y: wy};
+                 } else {
+                     points[draggingPointIdx] = {x: wx, y: wy};
+                 }
+             }
+             draw();
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        if (isPanning) {
+            isPanning = false;
+            canvas.style.cursor = 'crosshair';
+            return;
+        }
+
+        if (isSelecting) {
+            isSelecting = false;
+
+            if (selectionRect && points.length > 0) {
+                 // selectionRect is in LOGICAL SCREEN Coords
+                 // Project back to World (Unscale logic)
+                 const p1X = (selectionRect.x - viewOffset.x) / viewScale;
+                 const p1Y = (selectionRect.y - viewOffset.y) / viewScale;
+                 const p2X = (selectionRect.x + selectionRect.w - viewOffset.x) / viewScale;
+                 const p2Y = (selectionRect.y + selectionRect.h - viewOffset.y) / viewScale;
+
+                 const minX = Math.min(p1X, p2X);
+                 const maxX = Math.max(p1X, p2X);
+                 const minY = Math.min(p1Y, p2Y);
+                 const maxY = Math.max(p1Y, p2Y);
+
+                 points.forEach((p, i) => {
+                     if (p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY) {
+                         selectedPointIndices.add(i);
+                     }
+                 });
+            }
+            selectionRect = null;
+            draw();
+            return;
+        }
+
+        draggingPointIdx = -1;
+        isGroupDragging = false;
+        if(boxMode && isDrawingBox) {
+             isDrawingBox = false;
+             let bx = boxStart.x; let by = boxStart.y; let bw = boxStart.w; let bh = boxStart.h;
+             if(bw < 0) { bx += bw; bw *= -1; }
+             if(bh < 0) { by += bh; bh *= -1; }
+
+             if(bw > 5/viewScale && bh > 5/viewScale) {
+                  pushHistory();
+                  const cls = parseInt(document.getElementById('clsSelect').value);
+                  bboxes.push({x: bx, y: by, w: bw, h: bh, cls: cls});
+                  selectedBoxIdx = bboxes.length - 1;
+                  // Visual Coords
+                  const screenPos = toScreen(bx, by);
+                  showFloatEditor(selectedBoxIdx, screenPos.x, screenPos.y);
+             }
+             boxStart = null;
+             draw();
+        }
+    });
+
+    // Zoom Handler
+    canvas.addEventListener('wheel', e => {
+        e.preventDefault();
+        const zoomIntensity = 0.1;
+        const delta = e.deltaY < 0 ? 1 : -1;
+        const factor = Math.exp(delta * zoomIntensity);
+
+        const worldPos = toWorld(e.offsetX, e.offsetY);
+
+        viewScale *= factor;
+
+        // Clamp scale
+        if (viewScale < 0.1) viewScale = 0.1;
+        if (viewScale > 10) viewScale = 10;
+
+        // Mouse centered zoom
+        const vW = canvas.clientWidth || 1;
+        const scale = CANVAS_SIZE / vW;
+        const logicalX = e.offsetX * scale;
+        const logicalY = e.offsetY * scale;
+
+        viewOffset.x = logicalX - worldPos.x * viewScale;
+        viewOffset.y = logicalY - worldPos.y * viewScale;
+
+        draw();
+    });
+    // --- API & LOADING ---
+    const showStatus = (msg, color) => {
+        const s = document.getElementById('status');
+        s.innerText = msg; s.style.color = color || '#fff';
+        setTimeout(()=>s.innerText='', 3000);
+    };
+
+    // --- Filtering Logic ---
+    let allFiles = [];
+    let filterMode = 'all'; // 'all', 'labeled', 'unlabeled'
+
+    function setFilter(mode) {
+        filterMode = mode;
+        document.getElementById('btnFilterAll').classList.remove('active');
+        document.getElementById('btnFilterLbl').classList.remove('active');
+        document.getElementById('btnFilterUnlbl').classList.remove('active');
+        if(mode === 'all') document.getElementById('btnFilterAll').classList.add('active');
+        if(mode === 'labeled') document.getElementById('btnFilterLbl').classList.add('active');
+        if(mode === 'unlabeled') document.getElementById('btnFilterUnlbl').classList.add('active');
+        renderFileList();
+    }
+
+    function renderFileList() {
+        const list = document.getElementById('fileList');
+        list.innerHTML = '';
+
+        const filtered = allFiles.filter(f => {
+            if(filterMode === 'all') return true;
+            if(filterMode === 'labeled') return f.labeled;
+            if(filterMode === 'unlabeled') return !f.labeled;
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            list.innerHTML = '<div style="padding:10px; color:#666;">No images match filter.</div>';
+            return;
+        }
+
+        filtered.forEach(f => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            if (currentFile === f.name) div.classList.add('selected');
+            div.innerText = f.name;
+            if (f.labeled) {
+                div.innerHTML += '<span class="labeled-check">✓</span>';
+                div.style.color = '#00ff41';
+            }
+            div.onclick = () => loadFile(f.name, div);
+            list.appendChild(div);
+        });
+    }
+
+    async function loadImages() {
+        try {
+            const res = await fetch('/api/images');
+            if (!res.ok) throw new Error(`API Error: ${res.status}`);
+            allFiles = await res.json();
+            renderFileList();
+        } catch (e) {
+            console.error(e);
+            document.getElementById('fileList').innerHTML = `<div style="padding:10px; color:var(--neon-red);">ERROR: ${e.message}</div>`;
+            showStatus('CONNECTION ERROR', '#ff003c');
+        }
+    }
+
+    // Navigate to next/previous image using arrow keys
+    function navigateImage(direction) {
+        if (!currentFile || allFiles.length === 0) return;
+
+        // Get filtered list (respects current filter mode)
+        const filtered = allFiles.filter(f => {
+            if(filterMode === 'all') return true;
+            if(filterMode === 'labeled') return f.labeled;
+            if(filterMode === 'unlabeled') return !f.labeled;
+            return true;
+        });
+
+        if (filtered.length === 0) return;
+
+        // Find current index in filtered list
+        const currentIndex = filtered.findIndex(f => f.name === currentFile);
+        if (currentIndex === -1) return;
+
+        // Calculate next index with wrapping
+        let nextIndex = currentIndex + direction;
+        if (nextIndex < 0) nextIndex = filtered.length - 1; // Wrap to end
+        if (nextIndex >= filtered.length) nextIndex = 0; // Wrap to start
+
+        // Load the next image
+        const nextFile = filtered[nextIndex];
+        loadFile(nextFile.name);
+    }
+
+    async function loadFile(filename, div) {
+        try {
+            currentFile = filename;
+            selectedBoxIdx = -1;
+            hideFloatEditor();
+            history = [];
+            document.querySelectorAll('.file-item').forEach(e=>e.classList.remove('selected'));
+            if(div) div.classList.add('selected');
+
+            // Check cache first
+            const cachedImg = getCachedImage(filename);
+            if (cachedImg && cachedImg.complete) {
+                imageObj = cachedImg;
+                draw();
+            } else {
+                // Load new image
+                const newImg = new Image();
+                newImg.src = `/api/image/${filename}`;
+                newImg.onerror = () => showStatus('IMG LOAD FAIL', '#ff003c');
+                newImg.onload = () => {
+                    imageObj = newImg;
+                    cacheImage(filename, newImg);
+                    draw();
+                };
+            }
+
+            // Preload adjacent images in background
+            setTimeout(() => preloadAdjacentImages(), 100);
+
+            const res = await fetch(`/api/label/${filename}`);
+            if(!res.ok) throw new Error('Fetch label failed');
+
+            const data = await res.json();
+            if (data) {
+                 points = data.waypoints ? data.waypoints.map(p => ({x: p[0]*SCALE, y: p[1]*SCALE})) : [];
+                 if (data.bboxes) {
+                     bboxes = data.bboxes.map((b, i) => ({
+                         x: b[0]*SCALE,
+                         y: b[1]*SCALE,
+                         w: b[2]*SCALE,
+                         h: b[3]*SCALE,
+                         cls: data.categories ? data.categories[i] : 0
+                     }));
+                 } else { bboxes = []; }
+                 document.getElementById('cmdSelect').value = data.command || 0;
+                 templateMode = false;
+                 draw();
+            } else {
+                 points = []; bboxes = [];
+                 draw();
+            }
+        } catch(e) {
+            console.error(e);
+            showStatus('LOAD DATA FAIL', '#ff003c');
+        }
+    }
+
+    async function save() {
+        console.log('SAVE FUNCTION CALLED!');
+        if (!currentFile) {
+            showStatus('No file selected', '#ff003c');
+            return;
+        }
+        let finalPath = [];
+        if (templateMode && activeTemplate) finalPath = getBezierPoints(activeTemplate.p0, activeTemplate.p1, activeTemplate.p2, activeTemplate.p3, NUM_WAYPOINTS);
+        else finalPath = getSplinePoints(points, NUM_WAYPOINTS);
+
+        const normalizedWaypoints = finalPath.map(p => [p.x / SCALE, p.y / SCALE]);
+        const normalizedBoxes = bboxes.map(b => [b.x / SCALE, b.y / SCALE, b.w / SCALE, b.h / SCALE]);
+        const categories = bboxes.map(b => b.cls);
+
+        let controlPoints = [];
+        if (templateMode && activeTemplate) {
+            // Save absolute coordinates? Or normalized?
+            // Let's save normalized P0, P1, P2, P3
+            const p = [activeTemplate.p0, activeTemplate.p1, activeTemplate.p2, activeTemplate.p3];
+            controlPoints = p.map(pt => [pt.x / SCALE, pt.y / SCALE]);
+        }
+
+        const payload = {
+            image_path: `/home/quynhthu/Documents/AI-project/e2e/data/raw/${currentFile}`,
+            command: parseInt(document.getElementById('cmdSelect').value),
+            waypoints: normalizedWaypoints,
+            bboxes: normalizedBoxes,
+            categories: categories,
+            control_points: controlPoints
+        };
+
+        try {
+            await fetch('/api/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+            showStatus('LABELED SAVED', '#00ff41');
+            const selected = document.querySelector('.file-item.selected');
+            if (selected && !selected.innerHTML.includes('✓')) {
+                 selected.innerHTML += '<span class="labeled-check">✓</span>';
+                 selected.style.color = '#00ff41';
+            }
+        } catch(e) { showStatus('SAVE ERROR', '#ff003c'); }
+    }
+
+    async function unlabel() {
+        if (!currentFile) return;
+        if (!confirm('CONFIRM RESET: This will wipe labels for this image?')) return;
+        try {
+            await fetch(`/api/reset/${currentFile}`, { method: 'POST' });
+            showStatus('RESET COMPLETE', '#ff003c');
+            points = []; bboxes = [];
+            hideFloatEditor();
+            draw();
+            const selected = document.querySelector('.file-item.selected');
+            const check = selected.querySelector('.labeled-check');
+            if (check) check.remove();
+            selected.style.color = '';
+        } catch(e) { showStatus('RESET ERROR', '#ff003c'); }
+    }
+
+    async function duplicateImage() {
+        if (!currentFile) return;
+        try {
+            const res = await fetch(`/api/duplicate/${currentFile}`, { method: 'POST' });
+            if (!res.ok) throw new Error('Dup failed');
+            const data = await res.json();
+            showStatus('IMAGE DUPLICATED', '#00f3ff');
+            await loadImages();
+
+            // Auto-select new image?
+            // const items = document.querySelectorAll('.file-item');
+            // ... (optional, finding new item by name)
+        } catch(e) {
+            console.error(e);
+            showStatus('DUPLICATE FAIL', '#ff003c');
+        }
+    }
+
+    document.addEventListener('keydown', e => {
+        // Save shortcut
+        if((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); }
+        // Undo shortcut
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); popHistory(); }
+        // Delete shortcut
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (selectedBoxIdx !== -1) {
+                pushHistory(); bboxes.splice(selectedBoxIdx, 1); selectedBoxIdx = -1; hideFloatEditor(); draw();
+            }
+        }
+
+        // Arrow key navigation for images
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            // Don't interfere if user is typing in an input field
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+                return;
+            }
+
+            e.preventDefault();
+            navigateImage(e.key === 'ArrowLeft' ? -1 : 1);
+        }
+    });
+
+    document.getElementById('btnSave').onclick = save;
+    document.getElementById('btnUnlabel').onclick = unlabel;
+    document.getElementById('btnDuplicate').onclick = duplicateImage;
+
+    // --- Delete File Handler ---
+    document.getElementById('btnDeleteFile').onclick = async () => {
+        if (!currentFile) { showStatus('No file selected', '#aaa'); return; }
+        if (!confirm(`PERMANENTLY DELETE: ${currentFile}?\n\nThis cannot be undone!`)) return;
+
+        try {
+            const res = await fetch(`/api/image/${currentFile}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error('Delete failed');
+            const ret = await res.json();
+
+            showStatus(ret.deleted_file ? 'File Deleted' : 'Entry Removed', '#ff003c');
+
+            // Refresh List & Clear View
+            await loadImages();
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            imageObj = new Image();
+            currentFile = null;
+            points = []; bboxes = [];
+
+        } catch (e) {
+            console.error(e);
+            showStatus('Delete Error', '#ff003c');
+        }
+    };
+
+    // --- Bulk Delete Modal Logic ---
+    const bulkModal = document.getElementById('bulkDeleteModal');
+    const bulkFileList = document.getElementById('bulkFileList');
+    const selectedCountSpan = document.getElementById('selectedCount');
+
+    function openBulkDeleteModal() {
+        bulkFileList.innerHTML = '';
+        allFiles.forEach(f => {
+            const div = document.createElement('div');
+            div.style.cssText = 'display:flex; align-items:center; padding:5px; border-bottom:1px solid #222;';
+            div.innerHTML = `
+                <input type="checkbox" class="bulk-checkbox" data-name="${f.name}" data-labeled="${f.labeled}" style="margin-right:10px; width:18px; height:18px;">
+                <span style="color:${f.labeled ? '#00ff41' : '#888'};">${f.name}</span>
+                ${f.labeled ? '<span style="color:#00ff41; margin-left:auto;">✓</span>' : ''}
+            `;
+            bulkFileList.appendChild(div);
+        });
+        updateSelectedCount();
+        bulkModal.style.display = 'flex';
+    }
+
+    function closeBulkDeleteModal() {
+        bulkModal.style.display = 'none';
+    }
+
+    function updateSelectedCount() {
+        const checked = document.querySelectorAll('.bulk-checkbox:checked').length;
+        selectedCountSpan.textContent = checked;
+    }
+
+    document.getElementById('btnBulkDelete').onclick = openBulkDeleteModal;
+    document.getElementById('btnCancelBulkDelete').onclick = closeBulkDeleteModal;
+
+    document.getElementById('btnSelectAll').onclick = () => {
+        document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = true);
+        updateSelectedCount();
+    };
+
+    document.getElementById('btnDeselectAll').onclick = () => {
+        document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = false);
+        updateSelectedCount();
+    };
+
+    document.getElementById('btnSelectUnlabeled').onclick = () => {
+        document.querySelectorAll('.bulk-checkbox').forEach(cb => {
+            cb.checked = cb.dataset.labeled === 'false';
+        });
+        updateSelectedCount();
+    };
+
+    bulkFileList.addEventListener('change', updateSelectedCount);
+
+    document.getElementById('btnConfirmBulkDelete').onclick = async () => {
+        const selected = Array.from(document.querySelectorAll('.bulk-checkbox:checked')).map(cb => cb.dataset.name);
+        if (selected.length === 0) {
+            alert('No files selected!');
+            return;
+        }
+        if (!confirm(`DELETE ${selected.length} FILES?\\n\\nThis cannot be undone!`)) return;
+
+        try {
+            const res = await fetch('/api/images/bulk', {
+                method: 'DELETE',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(selected)
+            });
+            if (!res.ok) throw new Error('Bulk delete failed');
+            const ret = await res.json();
+
+            showStatus(`Deleted ${ret.deleted_entries} entries, ${ret.deleted_files} files`, '#ff003c');
+            closeBulkDeleteModal();
+            await loadImages();
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            imageObj = new Image();
+            currentFile = null;
+            points = []; bboxes = [];
+
+        } catch (e) {
+            console.error(e);
+            showStatus('Bulk Delete Error', '#ff003c');
+        }
+    };
+
+    loadImages();
+
+</script>
+</body>
+</html>

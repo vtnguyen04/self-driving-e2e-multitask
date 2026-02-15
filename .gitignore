@@ -1,0 +1,7 @@
+__pycache__/
+*.pth
+*.pt
+experiments/
+.venv/
+.env
+.DS_Store

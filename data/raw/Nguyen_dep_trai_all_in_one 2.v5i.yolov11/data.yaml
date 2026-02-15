@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 14
+names: ['car', 'crosswalk', 'hw-entry', 'hw-exit', 'lane', 'no_entry', 'obstacle', 'oneway', 'parking', 'parking-spot', 'priority', 'roundabout', 'stop-sign', 'walk-area']
+
+roboflow:
+  workspace: vo-thanh-nguyen
+  project: nguyen_dep_trai_all_in_one-2
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/vo-thanh-nguyen/nguyen_dep_trai_all_in_one-2/dataset/5
