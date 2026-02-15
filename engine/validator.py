@@ -38,7 +38,8 @@ class Validator:
                 targets = {
                     'waypoints': gt,
                     'bboxes': batch.get('bboxes', []),
-                    'categories': batch.get('categories', [])
+                    'categories': batch.get('categories', []),
+                    'curvature': batch.get('curvature', None)
                 }
 
                 loss_dict = self.criterion.advanced(preds, targets)

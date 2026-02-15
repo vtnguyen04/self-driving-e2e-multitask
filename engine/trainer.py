@@ -26,11 +26,21 @@ class Trainer:
         self.device = torch.device(config.trainer.device if torch.cuda.is_available() else "cpu")
 
         # 1. Model
-        self.model = BFMCE2ENet(
-            num_classes=config.head.num_classes,
-            backbone_name=config.backbone.name,
-            dropout_prob=getattr(config.trainer, 'cmd_dropout_prob', 0.0)
-        ).to(self.device)
+        # Check if we should use dynamic YOLO-style model
+        # For now, let's stick to BFMCE2ENet unless explicitly requested via config or if config.model_path is yaml
+        # But we want to demonstrate the capability.
+        # Let's add a check.
+        if hasattr(config, 'model_config_path') and config.model_config_path and Path(config.model_config_path).suffix in ['.yaml', '.yml']:
+             from models.yolo import DetectionModel
+             logger.info(f"Loading dynamic model from {config.model_config_path}")
+             self.model = DetectionModel(config.model_config_path, ch=3, verbose=True).to(self.device)
+        else:
+             self.model = BFMCE2ENet(
+                num_classes=config.head.num_classes,
+                backbone_name=config.backbone.name,
+                dropout_prob=getattr(config.trainer, 'cmd_dropout_prob', 0.0)
+             ).to(self.device)
+
         if hasattr(self.model, 'info'):
             self.model.info()
 
@@ -109,7 +119,12 @@ class Trainer:
                 if valid_batch_size == 0: continue
 
                 output = self.model(img, cmd, return_intermediate=True)
-                targets = {'waypoints': gt_waypoints, 'bboxes': batch['bboxes'], 'categories': batch['categories']}
+                targets = {
+                    'waypoints': gt_waypoints,
+                    'bboxes': batch['bboxes'],
+                    'categories': batch['categories'],
+                    'curvature': batch.get('curvature', None)
+                }
                 loss_dict = self.criterion.advanced(output, targets)
                 loss = loss_dict['total']
 

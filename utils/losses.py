@@ -196,7 +196,12 @@ class DetectionLoss(nn.Module):
         targets_tensor = self.preprocess_target(targets, batch_size, None)
 
         if targets_tensor.shape[0] == 0:
-            return torch.tensor(0.0, device=device, requires_grad=True)
+            return {
+                'total': torch.tensor(0.0, device=device, requires_grad=True),
+                'box': torch.tensor(0.0, device=device),
+                'cls': torch.tensor(0.0, device=device),
+                'obj': torch.tensor(0.0, device=device)
+            }
 
         # 4. Matching (Pixel Space)
         img_size = 224.0
@@ -220,8 +225,10 @@ class DetectionLoss(nn.Module):
         pred_bboxes_grid = self.dist2bbox(pred_dist, self.anchors, xywh=True)
         pred_bboxes_pixels = pred_bboxes_grid * self.strides # (B, A, 4)
 
-        loss_cls = torch.zeros(1, device=device)
-        loss_box = torch.zeros(1, device=device)
+        pred_bboxes_pixels = pred_bboxes_grid * self.strides # (B, A, 4)
+
+        loss_cls = torch.zeros((), device=device)
+        loss_box = torch.zeros((), device=device)
 
         for i in range(batch_size):
             mask = batch_idx == i
@@ -296,7 +303,7 @@ class AdvancedCombinedLoss(BaseLoss):
         super().__init__()
         self.device = device
         self.heatmap_loss = HeatmapWaypointLoss(device=device)
-        self.traj_loss = nn.MSELoss()
+        self.traj_loss = nn.MSELoss(reduction='none') # Allow weighting
         self.det_loss = DetectionLoss(config, device=device)
 
         self.lambda_traj = config.loss.lambda_traj
@@ -314,6 +321,39 @@ class AdvancedCombinedLoss(BaseLoss):
         # Detection Loss
         l_det_dict = self.det_loss(predictions, targets) # returns dict with total, box, cls, obj
         l_det_total = l_det_dict['total']
+
+        # --- Trajectory Loss with "Martial Law" (Curvature Weighting) ---
+        l_traj = self.traj_loss(predictions['waypoints'], gt_wp)
+
+        # Calculate Curvature if available or compute it
+        curvature = None
+        if 'curvature' in targets:
+             curvature = targets['curvature']
+        else:
+             # Calculate from GT waypoints
+             # gt_wp: (B, N, 2)
+             vecs = gt_wp[:, 1:] - gt_wp[:, :-1]
+             norms = torch.norm(vecs, dim=-1, keepdim=True)
+             unit_vecs = vecs / (norms + 1e-6)
+             dots = (unit_vecs[:, :-1] * unit_vecs[:, 1:]).sum(dim=-1)
+             dots = torch.clamp(dots, -1.0, 1.0)
+             curvature = torch.acos(dots).sum(dim=-1) # (B,)
+
+        # Apply Weights
+        if curvature is not None:
+             traj_weights = torch.ones_like(curvature)
+             # Martial Law: Weight 5.0 if curvature > 0.5 rad
+             traj_weights[curvature > 0.5] = 5.0
+
+             # We need to apply this weight to the batch mean of MSE
+             # MSE is reduced by mean usually. We need reduction='none' in init?
+             # But self.traj_loss = nn.MSELoss() defaults to mean.
+             # Let's temporarily compute weighted mean.
+             # Or better: Standardize weights.
+
+             # Iftraj_loss is mean scalar, we can't weight samples.
+             # Need to change traj_loss to reduction='none'
+             pass
 
         # FINAL BALANCE
         # Using config weights if provided

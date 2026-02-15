@@ -78,7 +78,11 @@ def parse_model(yaml_cfg, ch, verbose=True):  # model_dict, input_channels(3)
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         elif m is Detect:
-            args.append([ch[x] for x in f])
+            # f can be int or list
+            if isinstance(f, int):
+                args.append([ch[f]])
+            else:
+                args.append([ch[x] for x in f])
             # Detect(nc, ch)
             # args in yaml: [nc]
             # args here: [nc, ch_list]

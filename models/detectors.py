@@ -25,6 +25,8 @@ class Detect(nn.Module):
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
     def forward(self, x):
+        if isinstance(x, torch.Tensor):
+            x = [x]
         shape = x[0].shape
         for i in range(self.nl):
             # cat([reg, cls, obj])
