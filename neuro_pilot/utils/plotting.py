@@ -230,20 +230,21 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
     img_tensor = batch['image']
     
     # Handle both direct and nested target structures from Trainer
-    targets = batch.get('targets', batch)
-    bboxes_gt = targets.get('bboxes')
-    waypoints_gt = targets.get('waypoints')
+    targets_root = batch.get('targets', batch)
+    bboxes_gt = targets_root.get('bboxes')
+    waypoints_gt = targets_root.get('waypoints')
     if bboxes_gt is None: return
     
     with torch.no_grad():
-        img_bgr = ((torch.clamp(img_tensor * torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1,3,1,1) +
-                   torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1,3,1,1), 0, 1)).permute(0,2,3,1).cpu().numpy() * 255).astype(np.uint8)
+        inv_img = torch.clamp(img_tensor * torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1,3,1,1) +
+                             torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1,3,1,1), 0, 1)
+        img_bgr = (inv_img.permute(0,2,3,1).cpu().numpy() * 255).astype(np.uint8)
     
     img_bgr = np.ascontiguousarray(img_bgr[..., ::-1])
     B, H, W = img_bgr.shape[0], img_bgr.shape[1], img_bgr.shape[2]
     N = min(B, max_samples)
     has_hm = output is not None and 'heatmap' in output
-    grid_cols = 2 + (2 if has_hm else 0) # Path, Vision, HM_GT, HM_Pred
+    grid_cols = 2 + (2 if has_hm else 0)
     mosaic = np.full((N * H, grid_cols * W, 3), 40, dtype=np.uint8)
 
     detections = None
@@ -255,26 +256,37 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             strides = torch.tensor([8, 16, 32], device=img_tensor.device)
             anchors, stride_tensor = make_anchors(output['feats'], strides)
             
+            # 1. Decode Raw Distribution to Distance
             reg_max = output['boxes'].shape[1] // 4
             pred_dist = output['boxes'].permute(0, 2, 1) # [B, A, 4*reg_max]
             if reg_max > 1:
-                proj = torch.arange(reg_max, dtype=pred_dist.dtype, device=img_tensor.device)
+                proj = torch.arange(reg_max, dtype=pred_dist.dtype, device=pred_dist.device)
                 pred_dist = pred_dist.view(B, -1, 4, reg_max).softmax(3).matmul(proj)
             
+            # 2. Convert Distance to XYWH (Pixel space)
+            # pred_dist is ltrb in grid units. dist2bbox converts to cxcywh in grid units.
             pred_bboxes = dist2bbox(pred_dist, anchors.unsqueeze(0), xywh=True) * stride_tensor
+            
+            # 3. Apply NMS (conf_thres should be enough to filter noise)
             pred_scores = output['scores'].sigmoid()
             combined = torch.cat([pred_bboxes.permute(0, 2, 1), pred_scores], dim=1)
-            detections = non_max_suppression(combined, conf_thres=conf_thres)
+            detections = non_max_suppression(combined, conf_thres=conf_thres, iou_thres=0.45)
 
     for i in range(N):
         y_off = i * H
         
-        # 1. Path Column
+        # 1. Path Column (GT Green, Pred Magenta)
         can_p = img_bgr[i].copy(); ann_p = Annotator(can_p)
-        wp_gt = waypoints_gt[i].cpu().numpy() if waypoints_gt is not None else None
+        targets_i = batch.get('targets', batch)
+        wp_gt = targets_i.get('waypoints')[i].cpu().numpy() if 'waypoints' in targets_i else None
+        cmd_idx = targets_i.get('command_idx')[i].item() if 'command_idx' in targets_i else -1
+        cmd_map = {0: "STRAIGHT", 1: "LEFT", 2: "RIGHT", 3: "UTURN"}
+        cmd_txt = cmd_map.get(cmd_idx, f"CMD:{cmd_idx}")
+        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.4)
+        
         if wp_gt is not None:
             wp_gt = (wp_gt + 1) / 2 * [W-1, H-1]
-            ann_p.trajectory(wp_gt, color=(0, 255, 0)); ann_p.waypoints(wp_gt, color=(0, 200, 0))
+            ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=2); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=2)
 
         if output is not None and 'waypoints' in output:
             wp_p = output['waypoints']
@@ -282,14 +294,25 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             wp_p = wp_p[i].detach().cpu().numpy()
             if not np.isnan(wp_p).any():
                 wp_p = (wp_p + 1) / 2 * [W-1, H-1]
-                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=3); ann_p.waypoints(wp_p, color=(200, 0, 200))
+                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=3); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=3)
+        
+        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.4)
         ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, 0:W] = ann_p.result()
 
-        # 2. Vision Column (Detection)
+        # 2. Vision Column (Detection - Pred in RED)
         can_v = img_bgr[i].copy(); ann_v = Annotator(can_v, pil=True)
-        gt_b = bboxes_gt[i]
-        gt_c = targets.get('categories')[i] if 'categories' in targets else None
+        
+        # Ground Truth Bounding Boxes: Filter by batch_idx for flattened data
+        if 'batch_idx' in targets_i:
+            idx_mask = (targets_i['batch_idx'] == i)
+            gt_b = targets_i['bboxes'][idx_mask]
+            gt_c = targets_i['cls'][idx_mask]
+        else:
+            # Fallback for old list-style targets
+            gt_b = targets_i.get('bboxes')[i] if 'bboxes' in targets_i and i < len(targets_i['bboxes']) else None
+            gt_c = targets_i.get('categories')[i] if 'categories' in targets_i and i < len(targets_i['categories']) else None
+
         if gt_b is not None:
             if torch.is_tensor(gt_b): gt_b = gt_b.cpu().numpy()
             if torch.is_tensor(gt_c): gt_c = gt_c.cpu().numpy()
@@ -297,10 +320,8 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             for idx, b in enumerate(gt_b):
                 if b.sum() == 0: continue
                 cls_idx = int(gt_c[idx]) if gt_c is not None and idx < len(gt_c) else -1
-                if b.max() <= 1.01:
-                    x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
-                else:
-                    x1, y1, x2, y2 = b
+                # b is [cx, cy, w, h] normalized 0-1
+                x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
                 ann_v.box_label([x1, y1, x2, y2], label=f"GT: {names.get(cls_idx, cls_idx)}", color=(0, 255, 0))
         
         if detections is not None and i < len(detections):
@@ -308,7 +329,8 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             if torch.is_tensor(det): det = det.detach().cpu().numpy()
             for d in det:
                 cls_id = int(d[5]); conf = d[4]
-                ann_v.box_label(d[:4], label=f"{names.get(cls_id, cls_id)} {conf:.2f}", color=colors(cls_id, True))
+                # Drawing in RED (0, 0, 255) for predictions
+                ann_v.box_label(d[:4], label=f"{names.get(cls_id, cls_id)} {conf:.2f}", color=(0, 0, 255))
         ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, W:2*W] = ann_v.result()
 
@@ -319,23 +341,18 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             if waypoints_gt is not None:
                 gt_hm = hm_gen.generate_heatmap(waypoints_gt[i:i+1].cpu(), H, W).squeeze().numpy()
                 gt_hm = (gt_hm - gt_hm.min()) / (gt_hm.max() - gt_hm.min() + 1e-6)
-                can_gt = img_bgr[i].copy()
-                can_gt = cv2.addWeighted(cv2.applyColorMap((gt_hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_gt, 0.4, 0)
-                cv2.putText(can_gt, "GT HM", (10, 40), 0, 1.2, (255,255,255), 2)
+                can_gt = cv2.addWeighted(cv2.applyColorMap((gt_hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, img_bgr[i].copy(), 0.4, 0)
                 mosaic[y_off:y_off+H, 2*W:3*W] = can_gt
             
             hm_tensor = output['heatmap']
             if isinstance(hm_tensor, dict): hm_tensor = hm_tensor.get('heatmap', next(iter(hm_tensor.values())))
-            hm_i = hm_tensor[i].detach().cpu().numpy()
-            if hm_i.ndim == 3: hm_i = hm_i.squeeze(0) if hm_i.shape[0] == 1 else hm_i.mean(axis=0)
-            if hm_i.ndim == 2 and hm_i.size > 0:
-                hm_i = np.nan_to_num(hm_i.astype(np.float32))
-                hm = cv2.resize(hm_i, (W, H))
-                hm = (hm - hm.min()) / (hm.max() - hm.min() + 1e-6)
-                can_pred = img_bgr[i].copy()
-                can_pred = cv2.addWeighted(cv2.applyColorMap((hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_pred, 0.4, 0)
-                cv2.putText(can_pred, "PRED HM", (10, 40), 0, 1.2, (255,255,255), 2)
-                mosaic[y_off:y_off+H, 3*W:4*W] = can_pred
+            hm_i = hm_tensor[i].detach().cpu().numpy().squeeze()
+            if hm_i.ndim == 3: hm_i = hm_i.mean(axis=0)
+            # Ensure float32 for cv2.resize
+            hm_i = cv2.resize(np.nan_to_num(hm_i).astype(np.float32), (W, H))
+            hm_i = (hm_i - hm_i.min()) / (hm_i.max() - hm_i.min() + 1e-6)
+            can_pred = cv2.addWeighted(cv2.applyColorMap((hm_i*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, img_bgr[i].copy(), 0.4, 0)
+            mosaic[y_off:y_off+H, 3*W:4*W] = can_pred
 
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(save_path), mosaic)

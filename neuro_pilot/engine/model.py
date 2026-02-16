@@ -202,7 +202,8 @@ class NeuroPilot(nn.Module):
              if cmd.ndim == 1: cmd = cmd.unsqueeze(0)
 
         # Pass command to backend (which calls model.forward)
-        kwargs['cmd_onehot'] = cmd
+        kwargs['cmd'] = cmd
+        kwargs['cmd_idx'] = cmd.argmax(dim=-1) if cmd.ndim > 1 else cmd
 
         # Inference
         y = self.backend.forward(tensor_input, **kwargs)

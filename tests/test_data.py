@@ -80,7 +80,8 @@ class TestDataPipeline(unittest.TestCase):
         self.assertEqual(collated['image'].shape, (1, 3, 224, 224))
         self.assertEqual(collated['command_idx'].shape, (1,))
         self.assertEqual(collated['curvature'].shape, (1,))
-        self.assertIn('categories', collated)
+        self.assertIn('cls', collated)
+        self.assertIn('batch_idx', collated)
 
 if __name__ == '__main__':
     unittest.main()

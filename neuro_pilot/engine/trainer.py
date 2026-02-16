@@ -53,14 +53,24 @@ class Trainer(BaseTrainer):
 
         # 2. Loss
         self.criterion = CombinedLoss(self.cfg, self.model, device=self.device)
-        self.loss_names = ["total", "traj", "det", "hm", "L1"]
+        self.loss_names = ["total", "traj", "box", "cls_det", "dfl", "hm", "L1"]
 
         # 3. Optimizer
-        self.optimizer = optim.AdamW(
-            self.model.parameters(),
-            lr=self.cfg.trainer.learning_rate,
-            weight_decay=self.cfg.trainer.weight_decay
-        )
+        opt_type = getattr(self.cfg.trainer, 'optimizer', 'AdamW')
+        if opt_type == 'SGD':
+            self.optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.cfg.trainer.learning_rate,
+                momentum=self.cfg.trainer.momentum,
+                weight_decay=self.cfg.trainer.weight_decay,
+                nesterov=True
+            )
+        else:
+            self.optimizer = optim.AdamW(
+                self.model.parameters(),
+                lr=self.cfg.trainer.learning_rate,
+                weight_decay=self.cfg.trainer.weight_decay
+            )
 
         # 4. EMA
         if hasattr(self.cfg.trainer, 'use_ema') and self.cfg.trainer.use_ema:
@@ -138,9 +148,10 @@ class Trainer(BaseTrainer):
                 output = self.model(img, cmd=cmd, return_intermediate=True)
                 targets = {
                     'waypoints': gt_waypoints,
-                    'bboxes': batch['bboxes'],
-                    'categories': batch['categories'],
-                    'curvature': batch.get('curvature', None),
+                    'bboxes': batch['bboxes'].to(self.device),
+                    'cls': batch.get('cls', batch.get('categories')).to(self.device),
+                    'batch_idx': batch.get('batch_idx', torch.zeros(0)).to(self.device),
+                    'curvature': batch.get('curvature', torch.zeros(img.size(0))).to(self.device),
                     'command_idx': batch['command_idx'].to(self.device)
                 }
 
@@ -182,12 +193,13 @@ class Trainer(BaseTrainer):
             mem = f"{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G"
             
             # Format metrics for the bar (aligned with headers)
-            # headers: [Epoch, GPU_mem] + self.loss_names + [Instances, Size]
-            # loss_names: [total, traj, det, hm, L1]
+            # loss_names: ["total", "traj", "box", "cls_det", "dfl", "hm", "L1"]
             metrics_vals = [
                 f"{self.batch_metrics['total']:.4g}",
                 f"{self.batch_metrics.get('traj', 0):.4g}",
-                f"{self.batch_metrics.get('det', 0):.4g}",
+                f"{self.batch_metrics.get('box', 0):.4g}",
+                f"{self.batch_metrics.get('cls_det', 0):.4g}",
+                f"{self.batch_metrics.get('dfl', 0):.4g}",
                 f"{self.batch_metrics.get('heatmap', 0):.4g}",
                 f"{l1_err:.4g}"
             ]

@@ -26,4 +26,4 @@ head:
 
   # 4. Classification (Auxiliary)
   - [0, 1, SelectFeature, 'p5'] # 11 - p5
-  - [11, 1, ClassificationHead, [14, 256, 0.1]] # 12 - Command recognition
+  - [11, 1, ClassificationHead, [4, 256, 0.1]] # 12 - Command recognition (4 classes)

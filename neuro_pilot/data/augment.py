@@ -1,9 +1,13 @@
+import warnings
 import random
 import cv2
 import numpy as np
 from typing import List, Dict, Any
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+
+# Suppress Albumentations warnings about unused processors (noisy during training)
+warnings.filterwarnings("ignore", message=".*no transform to process it.*")
 
 class BaseTransform:
     """Base class for all NeuroPilot transformations."""

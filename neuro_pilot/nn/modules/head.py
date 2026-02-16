@@ -129,9 +129,6 @@ class Detect(BaseHead):
                 a[-1].bias.data[:] = 1.0
                 b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
 
-    def decode_bboxes(self, bboxes: torch.Tensor, anchors: torch.Tensor, xywh: bool = True) -> torch.Tensor:
-        return dist2bbox(bboxes, anchors, xywh=xywh and not self.end2end and not self.xyxy, dim=1)
-
 class v10Detect(Detect):
     end2end = True
     def __init__(self, nc: int = 80, ch: tuple = ()):
@@ -152,7 +149,6 @@ class HeatmapHead(BaseHead):
     Head for generating heatmap logits.
     Inputs: [p3, c2] where p3 is high-level features and c2 is low-level features from backbone.
     """
-    head_name = "heatmap"
     head_name = "heatmap"
     def __init__(self, ch_in, ch_out=1, hidden_dim=64):
         super().__init__()
@@ -188,101 +184,104 @@ class HeatmapHead(BaseHead):
 
 class TrajectoryHead(BaseHead):
     """
-    Head for generating trajectory waypoints.
-    Inputs: [p5, heatmap_logits] + command (via kwargs or secondary input)
+    Professional Trajectory Head using Bezier Curves (Bernstein Basis).
+    Uses FiLM for command modulation and predicts 4 control points.
     """
     forward_with_kwargs = True
-    def __init__(self, ch_in, num_commands=4, num_waypoints=10, hidden_dim=256):
+    def __init__(self, ch_in, num_commands=4, num_waypoints=10, *args, **kwargs):
         super().__init__()
-        if isinstance(ch_in, list):
-            self.c5_dim = ch_in[0]
-        else:
-            self.c5_dim = ch_in
-
+        self.c5_dim = ch_in[0] if isinstance(ch_in, list) else ch_in
         self.num_commands = num_commands
         self.num_waypoints = num_waypoints
 
+        # FiLM Generator: Command -> (Gamma, Beta)
         self.cmd_embed = nn.Embedding(num_commands, 64)
-        
-        # Spatial pooling to preserve some location info without massive flatten
-        self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4)) 
-        flatten_dim = self.c5_dim * 4 * 4
-
-        self.traj_head = nn.Sequential(
-            nn.Linear(flatten_dim + 64, 512),
+        self.film_gen = nn.Sequential(
+            nn.Linear(64, 256),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 512),
-            nn.ReLU(inplace=True),
-            nn.Linear(512, 4 * 2) # 4 control points (x, y)
+            nn.Linear(256, 1024) # 512 for gamma, 512 for beta
         )
 
+        # Spatial Awareness Pool
+        self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4))
+        flatten_dim = self.c5_dim * 4 * 4
+        
+        # STEM: Concatenate command embedding initially
+        self.vision_stem = nn.Sequential(
+            nn.Linear(flatten_dim + 64, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True)
+        )
+
+        # FINAL: Predict 4 control points
+        self.traj_head = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 4 * 2) # 4 Control Points (x, y)
+        )
+
+        # Bezier/Bernstein Registration
         t = torch.linspace(0, 1, num_waypoints)
-        self.register_buffer('bernstein_m', self._compute_bernstein_matrix(t))
+        self.register_buffer('bernstein_m', self._compute_bernstein_matrix(t)) # [T, 4]
 
     def _compute_bernstein_matrix(self, t):
-        b0, b1, b2, b3 = (1-t)**3, 3*(1-t)**2*t, 3*(1-t)*t**2, t**3
-        return torch.stack([b0, b1, b2, b3], dim=1)
+        # Cubic Bezier (4 control points)
+        b0 = (1 - t) ** 3
+        b1 = 3 * (1 - t) ** 2 * t
+        b2 = 3 * (1 - t) * t ** 2
+        b3 = t ** 3
+        return torch.stack([b0, b1, b2, b3], dim=1) # [T, 4]
 
     def forward(self, x, **kwargs):
-        cmd_onehot = kwargs.get('cmd_onehot')
-        cmd_idx = kwargs.get('cmd_idx')
+        cmd_idx = kwargs.get('cmd', kwargs.get('cmd_idx'))
         heatmap = kwargs.get('heatmap')
-
-        if isinstance(x, list):
-            p5 = x[0]
-            if len(x) > 1 and heatmap is None: heatmap = x[1]
-        else:
-            p5 = x
-
+        if isinstance(x, list): p5 = x[0]
+        else: p5 = x
         B = p5.shape[0]
+        if cmd_idx is None: cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
 
-        # Handle Command
-        if cmd_idx is None:
-            if cmd_onehot is None:
-                 cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
-            else:
-                 cmd_idx = cmd_onehot.argmax(dim=1)
-
-        # Feature Gating with Heatmap
+        # 1. Feature Integration with Heatmap (Residual)
         if heatmap is not None:
-            if isinstance(heatmap, dict):
-                heatmap = heatmap.get('heatmap')
-
-            if heatmap is not None:
-                # Resize heatmap to match p5 spatial dims if necessary
-                if heatmap.shape[2:] != p5.shape[2:]:
-                    mask = F.interpolate(torch.sigmoid(heatmap), size=p5.shape[2:], mode='bilinear', align_corners=False)
-                else:
-                    mask = torch.sigmoid(heatmap)
-                
-                # Element-wise gate
-                feat = p5 * mask
-            else:
-                feat = p5
+            if isinstance(heatmap, dict): heatmap = heatmap.get('heatmap')
+            mask = F.interpolate(torch.sigmoid(heatmap), size=p5.shape[2:], mode='bilinear', align_corners=False)
+            feat = p5 * (1.0 + mask)
         else:
             feat = p5
 
-        # Flatten features preserving spatial awareness
+        # 2. Vision + Command Concatenation
         pooled = self.spatial_pool(feat).flatten(1)
+        
+        # Ensure cmd_idx is 1D [B] even if passed as [B, 1] or one-hot
+        if cmd_idx.dim() > 1:
+            if cmd_idx.shape[-1] == self.num_commands: # One-hot
+                cmd_idx = cmd_idx.argmax(dim=-1)
+            else:
+                cmd_idx = cmd_idx.view(-1)
+                
+        cmd_emb = self.cmd_embed(cmd_idx.long())
+        combined = torch.cat([pooled, cmd_emb], dim=1) # [B, flatten_dim + 64]
 
-        # Concatenate Command Embedding
-        cmd_emb = self.cmd_embed(cmd_idx)
-        combined = torch.cat([pooled, cmd_emb], dim=1)
+        # 2.5 STEM processing
+        h = self.vision_stem(combined) # [B, 512]
 
-        # Predict Control Points (centered around 0, range [-1.5, 1.5])
-        # We add a small bias to ensure it doesn't start at pure zero
-        control_points = self.traj_head(combined).view(-1, 4, 2)
-        control_points = torch.tanh(control_points) * 1.5
+        # 3. FiLM Modulation (Strong Command Awareness)
+        film_params = self.film_gen(cmd_emb)
+        gamma, beta = film_params.chunk(2, dim=1) # [B, 512], [B, 512]
+        h = h * (1 + gamma) + beta
 
-        # Bezier Interpolation
-        waypoints = torch.einsum('bkd,nk->bnd', control_points, self.bernstein_m)
+        # 4. Predict Control Points
+        cp = torch.tanh(self.traj_head(h)).view(B, 4, 2)
 
-        # Safety: handle NaNs if they somehow appear (e.g. exploding gradients before clipping)
-        if torch.isnan(waypoints).any():
-             waypoints = torch.nan_to_num(waypoints, nan=0.0)
-             control_points = torch.nan_to_num(control_points, nan=0.0)
+        # 5. Bezier Interpolation (Bernstein)
+        # cp: [B, 4, 2], self.bernstein_m: [T, 4]
+        # Use einsum: b=batch, n=time(T), k=control_point(4), d=dim(2)
+        waypoints = torch.einsum('nk,bkd->bnd', self.bernstein_m, cp)
 
-        res = {'waypoints': waypoints, 'control_points': control_points}
+        # Safety
+        if torch.isnan(waypoints).any(): waypoints = torch.nan_to_num(waypoints, 0.0)
+
+        res = {'waypoints': waypoints, 'control_points': cp}
         return {'trajectory': res, **res}
 
 class Segment(Detect):
@@ -336,14 +335,11 @@ class Segment(Detect):
 
 class ClassificationHead(nn.Module):
     """
-    Standard Classification Head for global attributes (e.g., Speed Limit, Weather, Command Intent).
-    Inspired by Ultralytics Classify module.
+    Standard Classification Head for global attributes.
     """
     def __init__(self, ch, nc, hidden_dim=256, dropout=0.0):
         super().__init__()
-        # ch can be a list (from multiple layers) or a single int
         c_in = ch[-1] if isinstance(ch, (list, tuple)) else ch
-
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Sequential(
             nn.Linear(c_in, hidden_dim),
@@ -354,7 +350,6 @@ class ClassificationHead(nn.Module):
         )
 
     def forward(self, x):
-        if isinstance(x, (list, tuple)):
-            x = x[-1]
+        if isinstance(x, (list, tuple)): x = x[-1]
         x = self.pool(x).flatten(1)
         return {"classes": self.conv(x)}

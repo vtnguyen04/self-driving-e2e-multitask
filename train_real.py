@@ -15,7 +15,7 @@ def run_real_training():
         "model_cfg": "neuro_pilot/cfg/models/yolo_all_tasks.yaml",
         "data": {
             "root_dir": "neuro_pilot/data",
-            "batch_size": 32,  # Safer for 640px on 6GB
+            "batch_size": 16,  # Reduced from 32 for 6GB VRAM safety
             "image_size": 640,
             "augment": {
                 "rotate_deg": 5.0,
@@ -31,16 +31,17 @@ def run_real_training():
         },
         "loss": {
             "lambda_det": 1.0,
-            "lambda_traj": 0.05, # Trajectory is very sensitive, small weight
+            "lambda_traj": 10.0, # Balanced weight for multi-task
             "lambda_heatmap": 1.0,
             "fitness_l1": 0.8,
             "fitness_map50": 0.2
         },
         "trainer": {
-            "experiment_name": "production_run_v3",
+            "experiment_name": "debug_run_v3",
             "image_size": 640,
             "max_epochs": 100,
-            "learning_rate": 1e-3,   # AdamW standard
+            "learning_rate": 1e-3,   # Standard AdamW
+            "optimizer": "AdamW",
             "lr_final": 0.01,
             "warmup_epochs": 3.0,
             "use_ema": True,

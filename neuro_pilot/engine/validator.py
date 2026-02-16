@@ -29,8 +29,8 @@ class Validator(BaseValidator):
             img = batch['image'].to(self.device)
             cmd = batch['command'].to(self.device)
             gt = batch['waypoints'].to(self.device)
-            gt_boxes = batch['bboxes']
-            gt_classes = batch['categories']
+            gt_boxes = batch['bboxes'].to(self.device)
+            gt_classes = batch.get('cls', batch.get('categories')).to(self.device)
 
             # Inference
             preds = self.model(img, cmd=cmd)
@@ -38,8 +38,9 @@ class Validator(BaseValidator):
             targets = {
                 'waypoints': gt,
                 'bboxes': gt_boxes,
-                'categories': gt_classes,
-                'curvature': batch.get('curvature', None)
+                'cls': gt_classes,
+                'batch_idx': batch.get('batch_idx', torch.zeros(0)).to(self.device),
+                'curvature': batch.get('curvature', torch.zeros(img.size(0))).to(self.device)
             }
 
             # 1. Loss Calculation
@@ -79,7 +80,8 @@ class Validator(BaseValidator):
 
             for i in range(img.size(0)):
                 scores, labels = pred_scores[i].max(dim=1)
-                mask = scores > 0.05
+                # Lower threshold to see *anything* during early training
+                mask = scores > 0.001 
                 kept_boxes = pred_bboxes[i][mask]
                 kept_scores = scores[mask]
                 kept_labels = labels[mask]
@@ -94,7 +96,7 @@ class Validator(BaseValidator):
                     x2 = kept_boxes[:, 0] + kept_boxes[:, 2]/2
                     y2 = kept_boxes[:, 1] + kept_boxes[:, 3]/2
                     xyxy = torch.stack([x1, y1, x2, y2], dim=1)
-                    keep = nms(xyxy, kept_scores, 0.6)
+                    keep = nms(xyxy, kept_scores, 0.7) # Higher IoU thresh to keep more boxes for debug
                     formatted_preds.append({'boxes': kept_boxes[keep], 'scores': kept_scores[keep], 'labels': kept_labels[keep]})
                 else:
                     formatted_preds.append({'boxes': torch.empty((0, 4), device=self.device), 'scores': torch.tensor([], device=self.device), 'labels': torch.tensor([], device=self.device)})

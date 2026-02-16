@@ -50,7 +50,7 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
-def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=None, drop_last=False, pin_memory=True):
+def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=None, drop_last=False, pin_memory=True, collate_fn=None):
     """Professional dataloader factory supporting high-performance training.
 
     Args:
@@ -62,15 +62,17 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=Non
         sampler: Optional custom sampler (overrides shuffle/distributed).
         drop_last: Whether to drop last batch.
         pin_memory: Whether to pin memory.
+        collate_fn: Custom collate function.
     """
     batch = min(batch, len(dataset))
     nd = torch.cuda.device_count()
     nw = min(os.cpu_count() // max(nd, 1), workers)
 
-    # Handle Subsets (from random_split) to find collate_fn
-    collate_fn = getattr(dataset, "collate_fn", None)
-    if collate_fn is None and hasattr(dataset, "dataset"):
-         collate_fn = getattr(dataset.dataset, "collate_fn", None)
+    # Resolve collate_fn if not provided
+    if collate_fn is None:
+        collate_fn = getattr(dataset, "collate_fn", None)
+        if collate_fn is None and hasattr(dataset, "dataset"):
+             collate_fn = getattr(dataset.dataset, "collate_fn", None)
 
     if sampler is None and rank != -1:
         sampler = distributed.DistributedSampler(dataset, shuffle=shuffle)

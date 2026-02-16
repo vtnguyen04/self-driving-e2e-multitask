@@ -44,3 +44,9 @@ dev = [
     "ruff",
     "mypy"
 ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*no transform to process it.*:UserWarning",
+    "ignore:.*Support for class-based `config` is deprecated.*:pydantic.PydanticDeprecatedSince20",
+]

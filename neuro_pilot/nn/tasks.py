@@ -17,11 +17,11 @@ class Concat(nn.Module):
         return torch.cat(x, self.d)
 
 def initialize_weights(model):
-    """Initialize model weights to professional standards."""
+    """Initialize model weights to professional standards, skipping specialized heads."""
     for m in model.modules():
         t = type(m)
         if t is nn.Conv2d:
-            pass  # Kaiming or other professional init
+            pass # Standard init handled by layers or specialized heads
         elif t is nn.BatchNorm2d:
             m.eps = 1e-3
             m.momentum = 0.03
@@ -154,7 +154,13 @@ class DetectionModel(nn.Module):
             self.stride = m.stride
             self.train()
 
-        initialize_weights(self)
+        # 3. Professional Initialization
+        # We only call bias_init on heads that need it (like Detect)
+        # and rely on default kaiming/timm init for the rest to ensure stability.
+        for m in self.heads:
+            if hasattr(m, 'bias_init'):
+                m.bias_init()
+        
         if verbose:
             self.info()
 

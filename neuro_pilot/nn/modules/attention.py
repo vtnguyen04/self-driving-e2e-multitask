@@ -77,6 +77,9 @@ class VLFusion(nn.Module):
 
         # Context Gate to filter command relevance
         self.gate = CommandGate(c1)
+        
+        # Learnable residual gain, start at 1.0 to ensure command signal is present immediately
+        self.resid_gain = nn.Parameter(torch.ones(1))
 
     def forward(self, x, lang_feats=None, **kwargs):
         """
@@ -102,8 +105,9 @@ class VLFusion(nn.Module):
         # 2. Cross-Attention
         attn_out, _ = self.mha(self.q(x_flat), self.k(lang_feats), self.v(lang_feats))
 
-        # 3. Gated Residual Connection
-        x_flat = self.norm(x_flat + gate_score * attn_out)
+        # 3. Gated Residual Connection with learnable gain
+        # x_flat = self.norm(x_flat + gate_score * attn_out)
+        x_flat = self.norm(x_flat + self.resid_gain * gate_score * attn_out)
 
         if torch.isnan(x_flat).any():
              x_flat = torch.nan_to_num(x_flat, nan=0.0)
@@ -150,21 +154,32 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
     def forward(self, x, indices=None, **kwargs):
         """
         Args:
-            x (Tensor): Command indices [B] or image features (ignored if indices provided)
+            x (Tensor): Vision features or Command indices
             indices (Tensor): [B] batch of prompt indices (if from kwargs)
         Returns:
             Tensor: [B, 1, embed_dim]
         """
         if indices is None:
-            if isinstance(x, torch.Tensor) and x.dtype in {torch.long, torch.int}:
-                indices = x
-            elif 'cmd_onehot' in kwargs:
-                indices = kwargs['cmd_onehot'].argmax(dim=1)
+            # Prioritize indices from kwargs (passed from Trainer/tasks.py)
+            if 'cmd' in kwargs:
+                indices = kwargs['cmd']
             elif 'command_idx' in kwargs:
                 indices = kwargs['command_idx']
+            elif 'cmd_onehot' in kwargs:
+                indices = kwargs['cmd_onehot'].argmax(dim=1)
+            elif isinstance(x, torch.Tensor) and x.dtype in {torch.long, torch.int}:
+                indices = x
             else:
+                # Fallback to zero (Straight) if no command provided
                 B = x.shape[0] if hasattr(x, 'shape') else 1
                 indices = torch.zeros(B, dtype=torch.long, device=getattr(x, 'device', 'cpu'))
+        
+        # Ensure indices is 1D
+        if torch.is_tensor(indices) and indices.dim() > 1:
+            if indices.shape[-1] == 4: # One-hot
+                indices = indices.argmax(dim=-1)
+            else:
+                indices = indices.view(-1)
         if self.mode == 'clip':
             # 1. Select Synonyms (Training Augmentation)
             if self.training:

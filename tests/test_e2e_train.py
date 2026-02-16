@@ -4,7 +4,7 @@ import torch
 import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from neuro_pilot.engine.trainer import Trainer
 from neuro_pilot.cfg.schema import AppConfig
 from neuro_pilot.data.neuro_pilot_dataset_v2 import create_dummy_dataloader
@@ -33,23 +33,20 @@ class TestE2ETrain(unittest.TestCase):
         loader = create_dummy_dataloader(self.cfg)
 
         # init Trainer
+        self.cfg.trainer.device = "cpu"
         trainer = Trainer(self.cfg)
-        # Mock Model to avoid heavy computation?
-        # Actually, using real model is better for "Integration" test,
-        # but might be slow.
-        # NeuroPilotNet with MobilenetV4 might take 2-3 secs to init.
-        # Let's use it but very small input.
-
+        
+        # Patch prepare_dataloaders to avoid real DB access during setup
+        with patch('neuro_pilot.data.prepare_dataloaders', return_value=(loader, loader)):
+            trainer.setup()
+        
         # Disable TQDM to keep logs clean
         trainer.pbar = MagicMock()
 
         # Run 1 epoch
         trainer.epoch = 0
-        trainer.optimizer = MagicMock() # Mock optimizer to avoid steps?
-        # No, let's allow optimizer steps to check valid gradients.
-        # Re-enable real optimizer.
-        if trainer.model is None:
-            self.skipTest("Trainer model failed to initialize (dependencies/mocks issue)")
+        
+        # Re-enable real optimizer for gradient verification
         trainer.optimizer = torch.optim.Adam(trainer.model.parameters(), lr=0.001)
 
         # Mock scaler to avoid cuda amp on cpu
@@ -69,7 +66,7 @@ class TestE2ETrain(unittest.TestCase):
         self.assertIsNotNone(trainer.batch_metrics)
         self.assertIn('total', trainer.batch_metrics)
         # Check if batch size was correct
-        self.assertEqual(trainer.batch_size, 2)
+        self.assertEqual(trainer.current_batch['image'].shape[0], 2)
 
 if __name__ == '__main__':
     unittest.main()

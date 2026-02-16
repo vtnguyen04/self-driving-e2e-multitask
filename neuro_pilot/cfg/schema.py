@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 
 class BackboneConfig(BaseModel):
@@ -66,11 +66,12 @@ class TrainerConfig(BaseModel):
     early_stop_patience: int = 10 # More sensitive early stopping
     use_amp: bool = True
     grad_clip_norm: float = 1.0
-    grad_clip_norm: float = 1.0
     experiment_name: str = "default"
     cmd_dropout_prob: float = 0.4 # Randomly drop command to force visual learning
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(env_prefix="NeuroPilot_")
+
     project_name: str = "neuro_pilot_e2e"
     backbone: BackboneConfig = Field(default_factory=BackboneConfig)
     head: HeadConfig = Field(default_factory=HeadConfig)
@@ -78,9 +79,6 @@ class AppConfig(BaseModel):
     data: DataConfig = Field(default_factory=DataConfig)
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     model_config_path: Optional[str] = None
-
-    class Config:
-        env_prefix = "NeuroPilot_"
 
 def deep_update(mapping, *updating_mappings):
     import collections.abc
