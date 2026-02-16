@@ -25,9 +25,9 @@ class CompositeModel(nn.Module):
 
         if 'trajectory' in self.heads:
             # Trajectory head might use heatmap logits for attention
-            waypoints, control_points = self.heads['trajectory'](features, heatmap_logits)
-            outputs['waypoints'] = waypoints
-            outputs['control_points'] = control_points
+            res = self.heads['trajectory'](features, heatmap=heatmap_logits)
+            outputs['waypoints'] = res['waypoints']
+            outputs['control_points'] = res['control_points']
 
         if 'detect' in self.heads:
             # Detection head needs [p3, p4, p5] usually

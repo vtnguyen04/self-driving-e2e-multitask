@@ -172,9 +172,17 @@ class DetectionLoss:
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)
 
+        # 3. TAL Assignment: Both pred_bboxes and anc_points must be in PIXELS
+        anc_points_pixels = anchor_points * stride_tensor
+        pd_bboxes_pixels = (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype)
+
         _, target_bboxes, target_scores, fg_mask, _ = self.assigner(
-            pred_scores.detach().sigmoid(), (pred_bboxes.detach() * stride_tensor).type(gt_bboxes.dtype),
-            anchor_points * stride_tensor, gt_labels, gt_bboxes, mask_gt)
+            pred_scores.detach().sigmoid(), 
+            pd_bboxes_pixels,
+            anc_points_pixels, 
+            gt_labels, 
+            gt_bboxes, 
+            mask_gt)
 
         target_scores_sum = max(target_scores.sum(), 1)
         loss[1] = self.focal_loss(pred_scores, target_scores) / target_scores_sum

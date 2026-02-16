@@ -1,15 +1,4 @@
-import sys
-from unittest.mock import MagicMock
-
-# Mock dependencies before imports
-import unittest.mock as mock
-if "timm" in sys.modules:
-    del sys.modules["timm"]
-sys.modules["timm"] = mock.MagicMock()
-
-sys.modules["timm"].create_model.return_value.feature_info.channels.return_value = [32, 32, 64, 96, 960]
-sys.modules["torchvision"] = MagicMock()
-sys.modules["torchvision.ops"] = MagicMock()
+from unittest.mock import MagicMock, patch
 
 import unittest
 import torch

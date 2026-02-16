@@ -119,7 +119,7 @@ class MultiTask(BaseTask):
              return self.model
 
         # 3. Dynamic Fallback Architecture
-        self.overrides.get('dropout', getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0))
+        dropout_prob = self.overrides.get('dropout', getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0))
         model = DetectionModel(
             cfg="neuro_pilot/cfg/models/yolo_style.yaml", # Default dynamic template
             nc=self.cfg.head.num_classes,
@@ -141,9 +141,11 @@ class MultiTask(BaseTask):
         return trainer
 
     def get_validator(self) -> Validator:
-        # Usecuda as default, but allow override
+        # Use cuda as default, but allow override
         device = self.overrides.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
-        return Validator(self.cfg, self.model, self.criterion, device=device)
+        v = Validator(self.cfg, self.model, self.criterion, device=device)
+        v.names = self.names # Pass names for correct mAP calculation
+        return v
 
     def load_weights(self, weights_path: Union[str, Path]):
          load_checkpoint(weights_path, self.model)

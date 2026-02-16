@@ -11,6 +11,8 @@ class BasePredictor:
         self.device = device
         self.model.to(device)
         self.model.eval()
+        from .callbacks import CallbackList
+        self.callbacks = CallbackList()
 
     def __call__(self, source, **kwargs):
         """Main prediction entry point."""

@@ -536,19 +536,19 @@ def calculate_fitness(metrics: dict, weights: dict = None) -> float:
     Higher is better.
     """
     weights = weights or {'map50': 0.1, 'map95': 0.2, 'l1': 0.7}
-    
+
     map_50 = metrics.get('mAP_50', 0.0)
     map_95 = metrics.get('mAP_50-95', 0.0)
     l1 = metrics.get('L1', 1.0)
-    
+
     # Weights from config
     w_map50 = weights.get('map50', 0.1)
     w_map95 = weights.get('map95', 0.2)
     w_l1 = weights.get('l1', 0.7)
-    
+
     # Convert L1 error to a 'goodness' score
     l1_score = 1.0 / (1.0 + l1)
-    
+
     return map_50 * w_map50 + map_95 * w_map95 + l1_score * w_l1
 
 class BaseMetric(ABC):
@@ -595,21 +595,22 @@ class HeatmapMetric(BaseMetric):
 
     def update(self, preds, batch):
         if 'heatmap' not in preds: return
-        torch.sigmoid(preds['heatmap'])
+        pred_hm = preds['heatmap']
+        gt_wp = batch['waypoints'].to(pred_hm.device)
+        B, _, H, W = pred_hm.shape
 
-        # We need to generate GT heatmap or if it's already in batch
-        # Usually validate doesn't generate on the fly unless we use the loss function's generator.
-        # But for 'metric', we might just compare against what the model predicted vs some ground truth.
-        # If 'heatmap' is not in batch, we skip or we assume the validator provided it.
-        # Check atomic.py later if needed. For now, simplistic MSE if gt exists.
+        # We need a generator to create GT heatmap from waypoints for metric calculation
+        from neuro_pilot.utils.losses import HeatmapWaypointLoss
+        if not hasattr(self, 'generator'):
+             self.generator = HeatmapWaypointLoss(device=pred_hm.device)
 
-        # Note: In NeuroPilot, the Loss generates the heatmap from waypoints.
-        # Metric should ideally do the same or just report the Loss value.
-        # Here we just assume we can get it or skip.
-        pass
+        gt_hm = self.generator.generate_heatmap(gt_wp, H, W)
+        mse = torch.nn.functional.mse_score(torch.sigmoid(pred_hm), gt_hm) if hasattr(torch.nn.functional, 'mse_score') else torch.nn.functional.mse_loss(torch.sigmoid(pred_hm), gt_hm)
+        self.total_mse += mse.item()
+        self.count += 1
 
     def compute(self):
-        return {} # Placeholder until we know how to generate GT here without the Loss object
+        return {'Heatmap_MSE': self.total_mse / max(1, self.count)}
 
 class DetectionEvaluator:
     """
@@ -711,7 +712,7 @@ class DetectionMetric(BaseMetric):
 
         # Decoding logic
         pred_logits = preds['bboxes']
-        strides = torch.tensor([8, 16, 32], device=self.device)
+        strides = getattr(self.decoder, 'stride', torch.tensor([8., 16., 32.], device=self.device))
         if isinstance(pred_logits, list):
             anchors, strides = self.decoder.make_anchors(pred_logits, strides, 0.5)
             xx = []

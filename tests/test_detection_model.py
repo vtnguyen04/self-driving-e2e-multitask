@@ -1,12 +1,5 @@
 import sys
 from unittest.mock import MagicMock, patch
-import unittest.mock as mock
-if "timm" in sys.modules:
-    del sys.modules["timm"]
-sys.modules["timm"] = mock.MagicMock()
-
-sys.modules["timm"].create_model.return_value.feature_info.channels.return_value = [32, 32, 64, 96, 960]
-if "torchvision" not in sys.modules: sys.modules["torchvision"] = MagicMock()
 
 import unittest
 import torch

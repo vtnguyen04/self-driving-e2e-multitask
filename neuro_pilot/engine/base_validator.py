@@ -17,15 +17,19 @@ class BaseValidator:
 
         self.metrics = {}
         self.evaluator = None
+        from .callbacks import CallbackList
+        self.callbacks = CallbackList()
 
     def __call__(self, dataloader):
         """Standard evaluation entry point."""
         self.model.eval()
         self.init_metrics()
+        self.callbacks.on_val_start(self)
 
         with torch.no_grad():
             self.run_val_loop(dataloader)
 
+        self.callbacks.on_val_end(self)
         return self.compute_final_metrics()
 
     def init_metrics(self):

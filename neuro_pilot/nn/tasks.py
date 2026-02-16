@@ -160,7 +160,7 @@ class DetectionModel(nn.Module):
         for m in self.heads:
             if hasattr(m, 'bias_init'):
                 m.bias_init()
-        
+
         if verbose:
             self.info()
 
@@ -172,7 +172,10 @@ class DetectionModel(nn.Module):
         n_l = len(list(self.modules())) # All modules including subs
         logger.info(f"Model Summary: {len(self.model)} layers, {n_p} parameters, {n_g} gradients")
 
-    def forward(self, x, **kwargs):
+    def forward(self, *args, **kwargs):
+        x = args[0]
+        if len(args) > 1:
+            kwargs['cmd'] = args[1]
         y, _dt = [], []
         saved_outputs = {}
         for m in self.model:

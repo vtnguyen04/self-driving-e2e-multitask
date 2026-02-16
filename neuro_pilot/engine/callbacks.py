@@ -13,7 +13,17 @@ class Callback:
     def on_batch_start(self, trainer): pass
     def on_batch_end(self, trainer): pass
     def on_val_start(self, trainer): pass
+    def on_val_batch_start(self, trainer): pass
+    def on_val_batch_end(self, trainer): pass
     def on_val_end(self, trainer): pass
+
+    def on_predict_start(self, predictor): pass
+    def on_predict_batch_start(self, predictor): pass
+    def on_predict_batch_end(self, predictor): pass
+    def on_predict_end(self, predictor): pass
+
+    def on_export_start(self, exporter): pass
+    def on_export_end(self, exporter): pass
 
 class CallbackList:
     """Container to manage and execute a list of callbacks."""
@@ -44,8 +54,32 @@ class CallbackList:
     def on_val_start(self, trainer):
         for cb in self.callbacks: cb.on_val_start(trainer)
 
+    def on_val_batch_start(self, trainer):
+        for cb in self.callbacks: cb.on_val_batch_start(trainer)
+
+    def on_val_batch_end(self, trainer):
+        for cb in self.callbacks: cb.on_val_batch_end(trainer)
+
     def on_val_end(self, trainer):
         for cb in self.callbacks: cb.on_val_end(trainer)
+
+    def on_predict_start(self, predictor):
+        for cb in self.callbacks: cb.on_predict_start(predictor)
+
+    def on_predict_batch_start(self, predictor):
+        for cb in self.callbacks: cb.on_predict_batch_start(predictor)
+
+    def on_predict_batch_end(self, predictor):
+        for cb in self.callbacks: cb.on_predict_batch_end(predictor)
+
+    def on_predict_end(self, predictor):
+        for cb in self.callbacks: cb.on_predict_end(predictor)
+
+    def on_export_start(self, exporter):
+        for cb in self.callbacks: cb.on_export_start(exporter)
+
+    def on_export_end(self, exporter):
+        for cb in self.callbacks: cb.on_export_end(exporter)
 
 class LoggingCallback(Callback):
     """Handles all logging (Console, CSV, TensorBoard)."""
@@ -83,7 +117,7 @@ class CheckpointCallback(Callback):
         # Fallback to inverse loss if fitness not defined
         if fitness == 0.0 and hasattr(trainer, 'val_loss'):
             fitness = -trainer.val_loss
-            
+
         is_best = fitness > self.best_fitness
         if is_best:
             self.best_fitness = fitness

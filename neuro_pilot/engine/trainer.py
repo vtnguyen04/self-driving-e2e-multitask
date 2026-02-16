@@ -53,7 +53,7 @@ class Trainer(BaseTrainer):
 
         # 2. Loss
         self.criterion = CombinedLoss(self.cfg, self.model, device=self.device)
-        self.loss_names = ["total", "traj", "box", "cls_det", "dfl", "hm", "L1"]
+        self.loss_names = ["total", "traj", "box", "cls_det", "dfl", "heatmap", "L1"]
 
         # 3. Optimizer
         opt_type = getattr(self.cfg.trainer, 'optimizer', 'AdamW')
@@ -83,7 +83,7 @@ class Trainer(BaseTrainer):
         viz_cb = VisualizationCallback(ckpt_dir / "viz")
         if hasattr(self.model, 'names'):
             viz_cb.names = self.model.names
-            
+
         self.callbacks = CallbackList([
             LoggingCallback(MetricLogger(ckpt_dir, "train", "train_metrics.csv")),
             CheckpointCallback(ckpt_dir, self.cfg),
@@ -119,14 +119,14 @@ class Trainer(BaseTrainer):
         self.callbacks.on_epoch_start(self)
 
         nw = max(round(self.cfg.trainer.warmup_epochs * len(dataloader)), 100)
-        
+
         desc = f"{self.epoch:>10}/{self.cfg.trainer.max_epochs - 1:<10}"
         self.pbar = TQDM(enumerate(dataloader), total=len(dataloader), desc=desc)
         for batch_idx, batch in self.pbar:
             self.callbacks.on_batch_start(self)
-            
+
             ni = batch_idx + self.epoch * len(dataloader) # number integrated batches (since train start)
-            
+
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
@@ -188,10 +188,10 @@ class Trainer(BaseTrainer):
             self.batch_metrics = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in loss_dict.items()}
             if pred_path is not None:
                 self.batch_metrics['L1'] = l1_err
-            
+
             # Progress bar update (Ultralytics style)
             mem = f"{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G"
-            
+
             # Format metrics for the bar (aligned with headers)
             # loss_names: ["total", "traj", "box", "cls_det", "dfl", "hm", "L1"]
             metrics_vals = [
@@ -203,7 +203,7 @@ class Trainer(BaseTrainer):
                 f"{self.batch_metrics.get('heatmap', 0):.4g}",
                 f"{l1_err:.4g}"
             ]
-            
+
             pbar_desc = ("%11s" * 2 + "%11s" * len(metrics_vals) + "%11s" * 2) % (
                 f"{self.epoch}/{self.cfg.trainer.max_epochs - 1}",
                 mem,
@@ -252,7 +252,7 @@ class Trainer(BaseTrainer):
             val_metrics = self.validator(val_loader)
             self.val_loss = val_metrics.get('avg_loss', 0.0)
             self.val_metrics = val_metrics
-            
+
             # Update fitness (Higher is better)
             from neuro_pilot.utils.metrics import calculate_fitness
             fitness_weights = {
@@ -286,4 +286,3 @@ class Trainer(BaseTrainer):
 
         self.callbacks.on_train_end(self)
         logger.info("Training complete.")
-

@@ -2,7 +2,6 @@ import sys
 from unittest.mock import MagicMock
 
 # Mock missing dependencies to allow architecture verification
-sys.modules["torchvision"] = MagicMock()
 sys.modules["torchvision.ops"] = MagicMock()
 sys.modules["timm"] = MagicMock()
 sys.modules["timm.utils"] = MagicMock()

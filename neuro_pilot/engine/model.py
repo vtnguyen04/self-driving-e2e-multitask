@@ -32,10 +32,11 @@ class NeuroPilot(nn.Module):
         if not NeuroPilot._system_logged:
             log_system_info()
             NeuroPilot._system_logged = True
-            
+
         self.overrides = kwargs
         self.task_wrapper = None
         self.model = None
+        self.predictor = None
 
         # 1. Determine Task Type
         self.task_name = task or "multitask"
@@ -145,10 +146,10 @@ class NeuroPilot(nn.Module):
 
         # Merge kwargs into overrides for the trainer
         self.overrides = deep_update(self.overrides, kwargs)
-        
+
         # Re-apply overrides to task_wrapper
         self.task_wrapper.overrides = deep_update(self.task_wrapper.overrides, kwargs)
-        
+
         # Update task_wrapper config if needed
         cfg_dict = self.cfg_obj.model_dump()
         cfg_dict = deep_update(cfg_dict, kwargs)
@@ -168,65 +169,66 @@ class NeuroPilot(nn.Module):
         return metrics
 
     def predict(self, source, **kwargs):
-        """Predict using the model."""
-        if not self.training:
-            self.eval()
+        """
+        Perform inference on the given source.
+        Returns a list of Results objects.
+        """
+        if self.predictor is None:
+            from neuro_pilot.engine.predictor import Predictor
+            self.predictor = Predictor(self.cfg_obj, self.model, self.device)
 
-        device = self.device
+        return self.predictor(source, **kwargs)
 
-        # Input handling
-        tensor_input = None
-        if isinstance(source, torch.Tensor):
-            tensor_input = source.to(device)
-            if tensor_input.ndim == 3: tensor_input = tensor_input.unsqueeze(0)
-        elif isinstance(source, (str, Path)):
-             from PIL import Image
-             import torchvision.transforms as T
-             img = Image.open(str(source)).convert('RGB')
-             transform = T.Compose([
-                 T.Resize((224, 224)),
-                 T.ToTensor(),
-                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-             ])
-             tensor_input = transform(img).unsqueeze(0).to(device)
-
-        # Command handling (Multitask specific - could be abstracted if needed)
-        # For a pure generic API, we might assume kwargs handles this, or the model signature varies.
-        # But 'predict' usually implies inference on standard inputs.
-        cmd = kwargs.get('command')
-        if cmd is None:
-             # Default command
-             cmd = torch.tensor([1.0, 0.0, 0.0, 0.0], device=device).unsqueeze(0)
-        if isinstance(cmd, torch.Tensor):
-             cmd = cmd.to(device)
-             if cmd.ndim == 1: cmd = cmd.unsqueeze(0)
-
-        # Pass command to backend (which calls model.forward)
-        kwargs['cmd'] = cmd
-        kwargs['cmd_idx'] = cmd.argmax(dim=-1) if cmd.ndim > 1 else cmd
-
-        # Inference
-        y = self.backend.forward(tensor_input, **kwargs)
-
-        # Post-Processing (NMS)
-        apply_nms = kwargs.get('augment', False) or kwargs.get('nms', True)
-
-        if apply_nms:
-            # Check if output is likely detection (B, 4+C, N) or similar
-            is_det = isinstance(y, torch.Tensor) and y.ndim == 3 and y.shape[1] > 4
-
-            if is_det:
-                 from neuro_pilot.utils.nms import non_max_suppression
-                 y = non_max_suppression(y,
-                                         conf_thres=kwargs.get('conf', 0.25),
-                                         iou_thres=kwargs.get('iou', 0.45))
-
-        return y
+    def export(self, **kwargs):
+        """
+        Export the model to a specific format (e.g., ONNX, TensorRT).
+        """
+        from neuro_pilot.engine.exporter import Exporter
+        exporter = Exporter(self.cfg_obj, self.model, self.device)
+        return exporter(**kwargs)
 
     def val(self, **kwargs):
-        """Validate."""
+        """Validate locally using the task's validator."""
         validator = self.task_wrapper.get_validator()
-        return validator(kwargs.get('dataloader'))
+        dataloader = kwargs.get('dataloader')
+        if dataloader is None:
+             # Try to prepare dataloader from config
+             from neuro_pilot.data import prepare_dataloaders
+             _, dataloader = prepare_dataloaders(self.cfg_obj)
+        return validator(dataloader)
+
+    def benchmark(self, imgsz=640, half=True, batch=1, device=None):
+        """Benchmark model performance."""
+        import time
+        device = device or self.device
+        model = self.model.to(device)
+        if half and device != 'cpu':
+             model.half()
+
+        # Warmup
+        img = torch.zeros(batch, 3, imgsz, imgsz).to(device)
+        if half and device != 'cpu': img = img.half()
+        cmd = torch.zeros(batch, 4).to(device)
+        if half and device != 'cpu': cmd = cmd.half()
+
+        for _ in range(10):
+            model(img, cmd=cmd)
+
+        # Timed loop
+        n = 100
+        torch.cuda.synchronize() if device != 'cpu' else None
+        t1 = time.time()
+        for _ in range(n):
+            model(img, cmd=cmd)
+        torch.cuda.synchronize() if device != 'cpu' else None
+        t2 = time.time()
+
+        dt = (t2 - t1) / n * 1000 # ms
+        fps = 1000 / dt * batch
+        logger.info(f"Benchmark: {imgsz}x{imgsz}, batch={batch}, device={device}, half={half}")
+        logger.info(f"  Latency: {dt:.2f} ms")
+        logger.info(f"  Throughput: {fps:.2f} FPS")
+        return {'latency_ms': dt, 'fps': fps}
 
     def fuse(self):
         """Fuse layers."""

@@ -48,7 +48,7 @@ class NeuroPilotDataset(Dataset):
         path = Path(data.get('path', ''))
         img_dir = data.get('train') if self.split == 'train' else data.get('val')
         if not img_dir: return []
-        
+
         img_dir = path / img_dir if isinstance(img_dir, str) else [path / x for x in img_dir]
         img_files = get_image_files(img_dir)
         label_files = img2label_paths(img_files)
@@ -57,7 +57,7 @@ class NeuroPilotDataset(Dataset):
         for img_p, label_p in zip(img_files, label_files):
             # parse_yolo_label returns normalized [cls, [[x,y,w,h],...], [[kpts],...]]
             cls, bboxes_norm, kpts_norm = parse_yolo_label(label_p)
-            
+
             # Convert YOLO center-xywh to top-left xywh (still normalized 0-1)
             converted_bboxes = []
             for b in bboxes_norm:
@@ -94,7 +94,7 @@ class NeuroPilotDataset(Dataset):
             d = json.loads(r['data'])
             wp = d.get('waypoints', [])
             if not wp or len(wp) < 2: continue
-            
+
             # Normalize 224 -> 0-1
             wp_norm = [[p[0]/224.0, p[1]/224.0] for p in wp]
             bx_norm = [[b[0]/224.0, b[1]/224.0, b[2]/224.0, b[3]/224.0] for b in d.get('bboxes', [])]
@@ -121,7 +121,7 @@ class NeuroPilotDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        
+
         # Robust Path Resolution
         img_path = Path(sample.image_path)
         if not img_path.exists():
@@ -134,7 +134,7 @@ class NeuroPilotDataset(Dataset):
                 new_path_str = str(img_path).replace('/e2e/data/', '/e2e/neuro_pilot/data/')
                 if Path(new_path_str).exists():
                     img_path = Path(new_path_str)
-        
+
         img = cv2.imread(str(img_path))
         if img is None:
             # logger.warning(f"Failed to load image: {img_path}")
@@ -152,8 +152,8 @@ class NeuroPilotDataset(Dataset):
             w = max(1.0, min(b[2] * self.imgsz, self.imgsz - x))
             h = max(1.0, min(b[3] * self.imgsz, self.imgsz - y))
             pixel_bboxes.append([x, y, w, h])
-            
-        pixel_wp = [[max(0.0, min(p[0]*self.imgsz, self.imgsz - 1.0)), 
+
+        pixel_wp = [[max(0.0, min(p[0]*self.imgsz, self.imgsz - 1.0)),
                      max(0.0, min(p[1]*self.imgsz, self.imgsz - 1.0))] for p in sample.waypoints]
 
         if self.transform:
@@ -176,7 +176,7 @@ class NeuroPilotDataset(Dataset):
         for b in bx_aug:
             x, y, w, h = b
             bboxes_t.append([(x + w/2)/self.imgsz, (y + h/2)/self.imgsz, w/self.imgsz, h/self.imgsz])
-        
+
         bboxes_t = torch.tensor(bboxes_t, dtype=torch.float32) if bboxes_t else torch.zeros(0, 4)
         cls_t = torch.tensor(cls_t, dtype=torch.long)
 
@@ -206,7 +206,7 @@ def custom_collate_fn(batch):
             batch_bboxes.append(b['bboxes'])
             batch_cls.append(b['categories'].view(-1, 1))
             batch_idx.append(torch.full((b['bboxes'].shape[0], 1), i, dtype=torch.float32))
-            
+
     if batch_bboxes:
         collated['bboxes'] = torch.cat(batch_bboxes, 0)
         collated['cls'] = torch.cat(batch_cls, 0).squeeze(-1)
@@ -218,8 +218,8 @@ def custom_collate_fn(batch):
 def create_dummy_dataloader(config):
     from neuro_pilot.data.augment import StandardAugmentor
     pipeline = StandardAugmentor(training=True, imgsz=config.data.image_size)
-    samples = [Sample(image_path="", command=0, waypoints=[[0.5, 0.5]]*10, bboxes=[[0.1, 0.1, 0.2, 0.2]], categories=[1]) for _ in range(8)]
-    ds = NeuroPilotDataset(samples=samples, transform=pipeline, imgsz=config.data.image_size)
+    samples = [Sample(image_path="", command=0, waypoints=[[0.5, 0.5]]*10, bboxes=[[0.1, 0.1, 0.2, 0.2]], categories=[1]) for _ in range(10)]
+    ds = NeuroPilotDataset(samples=samples, transform=pipeline, imgsz=config.data.image_size, split='val')
     return DataLoader(ds, batch_size=config.data.batch_size, collate_fn=custom_collate_fn)
 
 def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_aug=True):
@@ -229,10 +229,10 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
 
     pipe = StandardAugmentor(training=use_aug, imgsz=config.data.image_size, config=config.data.augment)
     full_ds = NeuroPilotDataset(root_dir=root_dir, transform=pipe, dataset_yaml=config.data.dataset_yaml, imgsz=config.data.image_size)
-    
+
     tr_size = int(len(full_ds) * config.data.train_split)
     tr_ds, val_ds = random_split(full_ds, [tr_size, len(full_ds) - tr_size], generator=torch.Generator().manual_seed(42))
-    
+
     tr_loader = build_dataloader(tr_ds, batch=config.data.batch_size, shuffle=True, workers=config.data.num_workers, collate_fn=custom_collate_fn)
     val_ds.dataset.transform = StandardAugmentor(training=False, imgsz=config.data.image_size)
     val_loader = build_dataloader(val_ds, batch=config.data.batch_size, shuffle=False, workers=config.data.num_workers, collate_fn=custom_collate_fn)

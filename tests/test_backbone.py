@@ -1,16 +1,7 @@
 import sys
 from unittest.mock import MagicMock, patch
 
-# Mock dependencies
-import unittest.mock as mock
-if "timm" in sys.modules:
-    del sys.modules["timm"]
-sys.modules["timm"] = mock.MagicMock()
-
-# Ensure create_model returns something with feature_info.channels()
-sys.modules["timm"].create_model.return_value.feature_info.channels.return_value = [32, 32, 64, 96, 960]
-sys.modules["torchvision"] = MagicMock()
-sys.modules["torchvision.ops"] = MagicMock()
+# Removed global sys.modules pollution
 
 import unittest
 import torch

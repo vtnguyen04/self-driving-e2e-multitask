@@ -52,7 +52,7 @@ class Results:
             # Denormalize from [-1, 1] to [0, W-1] and [0, H-1]
             H, W = self.orig_img.shape[:2]
             wp = (wp + 1) / 2 * [W - 1, H - 1]
-            
+
             # Draw as trajectory line and waypoint dots
             annotator.trajectory(wp, color=(255, 0, 255), thickness=2)
             annotator.waypoints(wp, color=(200, 0, 200))
@@ -70,6 +70,24 @@ class Results:
         img = self.plot()
         cv2.imwrite(str(p), img)
         return str(p)
+
+    def show(self, **kwargs):
+        """Display the image with detections."""
+        img = self.plot(**kwargs)
+        cv2.imshow("NeuroPilot Prediction", img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    def summary(self):
+        """Return a string summary of results."""
+        s = f"Results for {self.path}:\n"
+        if self.boxes is not None:
+            s += f"- Detections: {len(self.boxes)}\n"
+        if self.waypoints is not None:
+            s += f"- Waypoints: {len(self.waypoints)}\n"
+        if self.heatmap is not None:
+            s += f"- Heatmap: {self.heatmap.shape}\n"
+        return s
 
     def tojson(self, normalize=False) -> dict:
         """Convert results to JSON-compatible dict."""

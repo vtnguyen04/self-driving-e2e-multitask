@@ -26,6 +26,7 @@ class Validator(BaseValidator):
         len(dataloader)
 
         for batch in pbar:
+            self.callbacks.on_val_batch_start(self)
             img = batch['image'].to(self.device)
             cmd = batch['command'].to(self.device)
             gt = batch['waypoints'].to(self.device)
@@ -81,7 +82,7 @@ class Validator(BaseValidator):
             for i in range(img.size(0)):
                 scores, labels = pred_scores[i].max(dim=1)
                 # Lower threshold to see *anything* during early training
-                mask = scores > 0.001 
+                mask = scores > 0.001
                 kept_boxes = pred_bboxes[i][mask]
                 kept_scores = scores[mask]
                 kept_labels = labels[mask]
@@ -111,6 +112,7 @@ class Validator(BaseValidator):
                     formatted_targets.append({'boxes': torch.empty((0, 4), device=self.device), 'labels': torch.tensor([], device=self.device)})
 
             self.evaluator.update(formatted_preds, formatted_targets)
+            self.callbacks.on_val_batch_end(self)
 
     def compute_final_metrics(self):
         """Final metrics computation and logging."""
