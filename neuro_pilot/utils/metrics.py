@@ -530,23 +530,23 @@ from abc import ABC, abstractmethod
 
 # --- NEURO PILOT ADAPTED CLASSES ---
 
-def calculate_fitness(metrics: dict) -> float:
+def calculate_fitness(metrics: dict, weights: dict = None) -> float:
     """
     Calculate a single fitness score for the multi-task model.
     Higher is better.
-    Balances: mAP (0.0 to 1.0) and Trajectory L1 (lower is better, typically 0.05 to 1.0).
     """
+    weights = weights or {'map50': 0.1, 'map95': 0.2, 'l1': 0.7}
+    
     map_50 = metrics.get('mAP_50', 0.0)
     map_95 = metrics.get('mAP_50-95', 0.0)
     l1 = metrics.get('L1', 1.0)
     
-    # Weights for different tasks
-    w_map50 = 0.1
-    w_map95 = 0.2
-    w_l1 = 0.7 # Trajectory is the primary task
+    # Weights from config
+    w_map50 = weights.get('map50', 0.1)
+    w_map95 = weights.get('map95', 0.2)
+    w_l1 = weights.get('l1', 0.7)
     
-    # Convert L1 error to a 'goodness' score (e.g., e^-L1 or just negative)
-    # Using simple 1 / (1 + L1) so it stays within [0, 1]
+    # Convert L1 error to a 'goodness' score
     l1_score = 1.0 / (1.0 + l1)
     
     return map_50 * w_map50 + map_95 * w_map95 + l1_score * w_l1

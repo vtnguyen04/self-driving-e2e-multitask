@@ -241,7 +241,12 @@ class Trainer(BaseTrainer):
             
             # Update fitness (Higher is better)
             from neuro_pilot.utils.metrics import calculate_fitness
-            self.fitness = calculate_fitness(val_metrics)
+            fitness_weights = {
+                'map50': self.cfg.loss.fitness_map50,
+                'map95': self.cfg.loss.fitness_map95,
+                'l1': self.cfg.loss.fitness_l1
+            }
+            self.fitness = calculate_fitness(val_metrics, weights=fitness_weights)
             val_metrics['fitness'] = self.fitness
 
             # Log validation to CSV

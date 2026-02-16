@@ -64,13 +64,9 @@ def parse_model(d, ch):
         elif m is TimmBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
-             if hasattr(c2, 'return_value'): # Handle MagicMock
-                 c2 = [32, 32, 64, 96, 960]
         elif m is NeuroPilotBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
-             if hasattr(c2, 'return_value'): # Handle MagicMock
-                 c2 = {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 32, 'gate_score': 1}
         elif m is SelectFeature:
              idx = args[0]
              backbone_ch = ch[f]

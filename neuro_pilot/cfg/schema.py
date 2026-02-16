@@ -15,9 +15,13 @@ class HeadConfig(BaseModel):
 
 class LossConfig(BaseModel):
     lambda_traj: float = 1.0
-    lambda_det: float = 0.01    # Very small to focus on trajectory
-    lambda_heatmap: float = 0.1 # Small but present
+    lambda_det: float = 0.01
+    lambda_heatmap: float = 0.1
     lambda_smooth: float = 0.01
+    # Fitness Weights (Must sum to 1.0 ideally)
+    fitness_map50: float = 0.1
+    fitness_map95: float = 0.2
+    fitness_l1: float = 0.7
 
 class AugmentConfig(BaseModel):
     enabled: bool = True
