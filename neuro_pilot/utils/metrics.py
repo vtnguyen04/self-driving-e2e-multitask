@@ -8,12 +8,9 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from neuro_pilot.utils.logger import logger as LOGGER
 
-from neuro_pilot.utils.logger import logger as LOGGER
-from neuro_pilot.utils import checks
 
 # NeuroPilot Semantic Branding
 PROJECT = "NeuroPilot AI"
@@ -335,7 +332,7 @@ class ConfusionMatrix(DataExportMixin):
                         ax.text(j, i, f"{val:.2f}" if normalize else f"{int(val)}",
                                 ha="center", va="center", fontsize=10,
                                 color="white" if val > color_threshold else "black")
-            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.05)
+            fig.colorbar(im, ax=ax, fraction=0.046, pad=0.05)
 
         title = "Confusion Matrix" + " Normalized" * normalize
         ax.set_xlabel("True")
@@ -533,6 +530,27 @@ from abc import ABC, abstractmethod
 
 # --- NEURO PILOT ADAPTED CLASSES ---
 
+def calculate_fitness(metrics: dict) -> float:
+    """
+    Calculate a single fitness score for the multi-task model.
+    Higher is better.
+    Balances: mAP (0.0 to 1.0) and Trajectory L1 (lower is better, typically 0.05 to 1.0).
+    """
+    map_50 = metrics.get('mAP_50', 0.0)
+    map_95 = metrics.get('mAP_50-95', 0.0)
+    l1 = metrics.get('L1', 1.0)
+    
+    # Weights for different tasks
+    w_map50 = 0.1
+    w_map95 = 0.2
+    w_l1 = 0.7 # Trajectory is the primary task
+    
+    # Convert L1 error to a 'goodness' score (e.g., e^-L1 or just negative)
+    # Using simple 1 / (1 + L1) so it stays within [0, 1]
+    l1_score = 1.0 / (1.0 + l1)
+    
+    return map_50 * w_map50 + map_95 * w_map95 + l1_score * w_l1
+
 class BaseMetric(ABC):
     @abstractmethod
     def update(self, preds, batch): pass
@@ -577,7 +595,7 @@ class HeatmapMetric(BaseMetric):
 
     def update(self, preds, batch):
         if 'heatmap' not in preds: return
-        pred_hm = torch.sigmoid(preds['heatmap'])
+        torch.sigmoid(preds['heatmap'])
 
         # We need to generate GT heatmap or if it's already in batch
         # Usually validate doesn't generate on the fly unless we use the loss function's generator.
@@ -728,9 +746,9 @@ class DetectionMetric(BaseMetric):
             kept_scores = scores[mask]
             kept_labels = labels[mask]
 
-            p_boxes = torch.empty((0,4), device=self.device)
-            p_scores = torch.empty((0,), device=self.device)
-            p_cls = torch.empty((0,), device=self.device)
+            torch.empty((0,4), device=self.device)
+            torch.empty((0,), device=self.device)
+            torch.empty((0,), device=self.device)
 
             if kept_boxes.numel() > 0:
                  from torchvision.ops import nms

@@ -48,10 +48,12 @@ The main configuration is in **`config/schema.py`**.
 - **Patience**: 30
 
 ## 📂 Output Locations
-- **Checkpoints**: `checkpoints/{experiment_name}/`
-  - `model_best.pth`: Best model by validation loss.
-  - `last.pth`: Most recent checkpoint.
-- **Logs**: Printed to console.
+- **Checkpoints**: `experiments/{experiment_name}/weights/`
+  - `best.pt`: Best model by validation fitness.
+  - `last.pt`: Most recent checkpoint.
+- **Logs**: `experiments/{experiment_name}/`
+  - `args.yaml`: Training configuration.
+  - `results.png`: Training metrics curves.
 
 ## 📊 Status (Current Run)
 - **Model**: RegNetY-400MF

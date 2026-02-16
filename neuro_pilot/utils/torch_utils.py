@@ -1,17 +1,19 @@
 import torch
 import shutil
+import math
 from pathlib import Path
 from neuro_pilot.utils.logger import logger
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth', save_dir='experiments'):
+def save_checkpoint(state, is_best, filename='checkpoint.pt', save_dir='weights'):
     """Save training checkpoint."""
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
-    filepath = Path(save_dir) / filename
+    save_path = Path(save_dir)
+    save_path.mkdir(parents=True, exist_ok=True)
+    filepath = save_path / filename
     torch.save(state, filepath)
     if is_best:
-        shutil.copyfile(filepath, Path(save_dir) / 'model_best.pth')
-    # Also save latest for resume
-    shutil.copyfile(filepath, Path(save_dir) / 'latest.pth')
+        best_path = save_path / filename.replace('last', 'best') if 'last' in filename else save_path / 'best.pt'
+        import shutil
+        shutil.copyfile(filepath, best_path)
 
 def load_checkpoint(filepath, model, optimizer=None, scaler=None):
     """Load checkpoint and restore state for training resume."""
@@ -40,14 +42,24 @@ def find_latest_checkpoint(experiment_name: str) -> Path | None:
     if not ckpt_dir.exists():
         return None
 
+    # New structure: weights/last.pt
+    weights_dir = ckpt_dir / "weights"
+    if weights_dir.exists():
+        last = weights_dir / "last.pt"
+        if last.exists():
+            return last
+        best = weights_dir / "best.pt"
+        if best.exists():
+            return best
+
+    # Legacy structure
     latest = ckpt_dir / "latest.pth"
     if latest.exists():
         return latest
 
-    # Fallback to model_best.pth
-    best = ckpt_dir / "model_best.pth"
-    if best.exists():
-        return best
+    best_pth = ckpt_dir / "model_best.pth"
+    if best_pth.exists():
+        return best_pth
 
     return None
 
@@ -81,6 +93,10 @@ def smart_inference_mode():
     def decorate(fn):
         return (torch.inference_mode if torch.__version__ >= "1.9.0" else torch.no_grad)()(fn)
     return decorate
+
+def one_cycle(y1=0.0, y2=1.0, steps=100):
+    """Returns a lambda function for a cosine learning rate scheduler."""
+    return lambda x: ((1 - math.cos(x * math.pi / steps)) / 2) * (y2 - y1) + y1
 
 class ModelEMA:
     """ Updated Exponential Moving Average (EMA) from https://github.com/rwightman/pytorch-image-models

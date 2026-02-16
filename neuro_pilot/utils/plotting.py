@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import math
-import os
 import cv2
 import numpy as np
 import torch
 from pathlib import Path
-from typing import Optional, Union, List, Dict, Any, Tuple
+from typing import Optional, Union, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
-from collections.abc import Callable
 
-from .ops import decode_and_nms, xywh2xyxy, xyxy2xywh
+from .ops import decode_and_nms, xywh2xyxy
 
 # Professional NeuroPilot End-to-End Self-Driving Visualization Suite
 # This framework is designed for high-performance multi-task plotting.
@@ -94,7 +92,7 @@ class Annotator:
         input_is_pil = isinstance(im, Image.Image)
         self.pil = pil or input_is_pil
         image_shape = im.size if input_is_pil else im.shape[:2]
-        self.lw = line_width or max(round(sum(image_shape) / 2 * 0.003), 2)
+        self.lw = line_width or max(round(sum(image_shape) / 2 * 0.005), 2)
 
         if self.pil:
             self.im = im if input_is_pil else Image.fromarray(im)
@@ -102,7 +100,8 @@ class Annotator:
                 self.im = self.im.convert("RGB")
             self.draw = ImageDraw.Draw(self.im, "RGBA")
             try:
-                size = font_size or max(round(sum(self.im.size) / 2 * 0.035), 12)
+                # Significantly larger default font (5% of img size)
+                size = font_size or max(round(sum(self.im.size) / 2 * 0.05), 18)
                 self.font = ImageFont.truetype(font, size)
             except Exception:
                 self.font = ImageFont.load_default()
@@ -110,7 +109,7 @@ class Annotator:
             assert im.data.contiguous, "Image must be contiguous."
             self.im = im if im.flags.writeable else im.copy()
             self.tf = max(self.lw - 1, 1)  # thickness
-            self.sf = self.lw / 3          # scale
+            self.sf = self.lw / 2          # scale
 
     def box_label(self, box: Union[list, tuple, np.ndarray, torch.Tensor], label: str = "",
                   color: tuple = (128, 128, 128), txt_color: tuple = (255, 255, 255)):
@@ -118,14 +117,12 @@ class Annotator:
         if isinstance(box, torch.Tensor):
             box = box.tolist()
 
-        # Ensure x1 <= x2 and y1 <= y2 for PIL compatibility
         x1, y1, x2, y2 = box[0], box[1], box[2], box[3]
         p1, p2 = (int(min(x1, x2)), int(min(y1, y2))), (int(max(x1, x2)), int(max(y1, y2)))
 
         if self.pil:
             self.draw.rectangle([p1, p2], width=self.lw, outline=color)
             if label:
-                # Pillow 10+ compatibility: getsize is deprecated
                 if hasattr(self.font, 'getbbox'):
                     left, top, right, bottom = self.font.getbbox(label)
                     w, h = right - left, bottom - top
@@ -144,8 +141,8 @@ class Annotator:
                 w, h = cv2.getTextSize(label, 0, fontScale=self.sf, thickness=self.tf)[0]
                 h += 3
                 outside = p1[1] >= h
-                p2 = p1[0] + w, p1[1] - h if outside else p1[1] + h
-                cv2.rectangle(self.im, p1, p2, color, -1, cv2.LINE_AA)
+                p2_rect = p1[0] + w, p1[1] - h if outside else p1[1] + h
+                cv2.rectangle(self.im, p1, p2_rect, color, -1, cv2.LINE_AA)
                 cv2.putText(self.im, label, (p1[0], p1[1] - 2 if outside else p1[1] + h - 1),
                             0, self.sf, txt_color, thickness=self.tf, lineType=cv2.LINE_AA)
 
@@ -153,7 +150,6 @@ class Annotator:
         """Return annotated image as NumPy array."""
         return np.asarray(self.im)
 
-    # ... Primitives like waypoints, trajectory, masks, kpts, text implemented using similar dual-backend patterns ...
     def waypoints(self, wp: np.ndarray, color: tuple = (0, 255, 0), radius: Optional[int] = None):
         r = radius or self.lw * 2
         if self.pil:
@@ -172,7 +168,11 @@ class Annotator:
     def text(self, pos: tuple, text: str, color: tuple = (255, 255, 255), bg_color: Optional[tuple] = None, scale: Optional[float] = None):
         if self.pil:
             if bg_color:
-                w, h = self.font.getsize(text)
+                if hasattr(self.font, 'getbbox'):
+                    left, top, right, bottom = self.font.getbbox(text)
+                    w, h = right - left, bottom - top
+                else:
+                    w, h = self.font.getsize(text)
                 self.draw.rectangle([pos[0], pos[1], pos[0]+w, pos[1]+h], fill=bg_color)
             self.draw.text(pos, text, fill=color, font=self.font)
         else:
@@ -184,6 +184,8 @@ class Annotator:
 
 def plot_labels(boxes: np.ndarray, cls: np.ndarray, names: Dict[int, str] = {}, save_dir: Path = Path("runs/labels")):
     """Professional dataset auditing visualization."""
+    import matplotlib
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     save_dir.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(2, 2, figsize=(15, 15))
@@ -229,14 +231,16 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
     targets = batch.get('bboxes', batch.get('targets'))
     waypoints = batch.get('waypoints')
     if targets is None: return
+    
     with torch.no_grad():
         img_bgr = ((torch.clamp(img_tensor * torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1,3,1,1) +
                    torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1,3,1,1), 0, 1)).permute(0,2,3,1).cpu().numpy() * 255).astype(np.uint8)
+    
     img_bgr = np.ascontiguousarray(img_bgr[..., ::-1])
     B, H, W = img_bgr.shape[0], img_bgr.shape[1], img_bgr.shape[2]
     N = min(B, max_samples)
     has_hm = output is not None and 'heatmap' in output
-    grid_cols = 2 + (1 if has_hm else 0)
+    grid_cols = 2 + (2 if has_hm else 0) # Path, Vision, HM_GT, HM_Pred
     mosaic = np.full((N * H, grid_cols * W, 3), 40, dtype=np.uint8)
 
     detections = None
@@ -245,50 +249,99 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
 
     for i in range(N):
         y_off = i * H
-        # Path
+        
+        # 1. Path Column
         can_p = img_bgr[i].copy(); ann_p = Annotator(can_p)
-        # Check if targets is dict or tensor
-        if isinstance(targets, dict) and 'waypoints' in targets:
-            wp = (targets['waypoints'][i].cpu().numpy() + 1) / 2 * [W-1, H-1]
-            ann_p.trajectory(wp, color=(0, 255, 0)); ann_p.waypoints(wp, color=(0, 200, 0))
-        elif waypoints is not None:
-             wp = (waypoints[i].cpu().numpy() + 1) / 2 * [W-1, H-1]
-             ann_p.trajectory(wp, color=(0, 255, 0)); ann_p.waypoints(wp, color=(0, 200, 0))
+        wp_gt = waypoints[i].cpu().numpy() if waypoints is not None else None
+        if wp_gt is not None:
+            wp_gt = (wp_gt + 1) / 2 * [W-1, H-1]
+            ann_p.trajectory(wp_gt, color=(0, 255, 0)); ann_p.waypoints(wp_gt, color=(0, 200, 0))
 
         if output is not None and 'waypoints' in output:
             wp_p = output['waypoints']
             if isinstance(wp_p, dict): wp_p = wp_p.get('waypoints', next(iter(wp_p.values())))
             wp_p = (wp_p[i].detach().cpu().numpy() + 1) / 2 * [W-1, H-1]
             ann_p.trajectory(wp_p, color=(255, 0, 255)); ann_p.waypoints(wp_p, color=(200, 0, 200))
-        ann_p.text((5, 20), "PATH", bg_color=(0,0,0)); mosaic[y_off:y_off+H, 0:W] = ann_p.result()
-        # Vision
+        ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
+        mosaic[y_off:y_off+H, 0:W] = ann_p.result()
+
+        # 2. Vision Column (Detection)
         can_v = img_bgr[i].copy(); ann_v = Annotator(can_v, pil=True)
-        if isinstance(targets, dict):
-            gt_b = targets.get('bboxes', [])
-        else:
-            gt_b = targets # Assume tensor
-        if i < len(gt_b) and gt_b[i].numel() > 0:
+        
+        # Ground Truth Bounding Boxes
+        gt_b = targets.get('bboxes', []) if isinstance(targets, dict) else targets
+        gt_c = targets.get('categories', []) if isinstance(targets, dict) else []
+
+        if i < len(gt_b):
             boxes_to_plot = gt_b[i]
-            if boxes_to_plot.ndim == 1: boxes_to_plot = boxes_to_plot.unsqueeze(0)
-            for b in boxes_to_plot.cpu().numpy():
+            classes_to_plot = gt_c[i] if i < len(gt_c) else None
+            
+            # Convert to numpy if tensor
+            if torch.is_tensor(boxes_to_plot):
+                boxes_to_plot = boxes_to_plot.cpu().numpy()
+            if torch.is_tensor(classes_to_plot):
+                classes_to_plot = classes_to_plot.cpu().numpy()
+
+            if boxes_to_plot.ndim == 1 and boxes_to_plot.size > 0:
+                boxes_to_plot = boxes_to_plot.reshape(-1, 4)
+
+            for idx, b in enumerate(boxes_to_plot):
                 if b.sum() == 0: continue
-                # We expect [batch_idx, cls, cx, cy, w, h] or [cx, cy, w, h, cls]
-                # Test format: [batch_idx, cls, cx, cy, w, h]
-                b_val = b[2:6] if len(b) == 6 else b[:4]
-                x1, y1, x2, y2 = xywh2xyxy(b_val.reshape(1, 4)).flatten() * [W, H, W, H] if b_val.max() <= 1.0 else b_val
-                ann_v.box_label([x1, y1, x2, y2], color=(0, 255, 0))
+                # Handle different label formats (cls, x, y, w, h) or just (x, y, w, h)
+                cls_idx = int(classes_to_plot[idx]) if classes_to_plot is not None and idx < len(classes_to_plot) else -1
+                
+                # Check if box is normalized [0, 1]
+                if b.max() <= 1.01:
+                    x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
+                else:
+                    x1, y1, x2, y2 = b
+                
+                label = f"GT: {names.get(cls_idx, cls_idx)}" if cls_idx != -1 else "GT"
+                ann_v.box_label([x1, y1, x2, y2], label=label, color=(0, 255, 0))
+        
+        # Predicted Bounding Boxes
         if detections is not None and i < len(detections):
-            for d in detections[i].cpu().numpy():
-                ann_v.box_label(d[:4], label=f"{names.get(int(d[5]), int(d[5]))} {d[4]:.2f}", color=colors(d[5], True))
+            det = detections[i]
+            if torch.is_tensor(det):
+                det = det.cpu().numpy()
+                
+            for d in det:
+                # d: [x1, y1, x2, y2, conf, cls]
+                cls_id = int(d[5])
+                conf = d[4]
+                ann_v.box_label(d[:4], label=f"{names.get(cls_id, cls_id)} {conf:.2f}", color=colors(cls_id, True))
+        ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, W:2*W] = ann_v.result()
-        # Attention
+
+        # 3. Heatmap Columns
         if has_hm:
-            can_a = img_bgr[i].copy(); hm = output['heatmap']
-            if isinstance(hm, dict): hm = hm.get('heatmap', next(iter(hm.values())))
-            hm = cv2.resize(hm[i].detach().cpu().numpy().squeeze(), (W, H))
-            hm = (hm - hm.min()) / (hm.max() - hm.min() + 1e-6)
-            can_a = cv2.addWeighted(cv2.applyColorMap((hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_a, 0.4, 0)
-            mosaic[y_off:y_off+H, 2*W:3*W] = can_a
+            # GT Heatmap
+            from neuro_pilot.utils.losses import HeatmapWaypointLoss
+            hm_gen = HeatmapWaypointLoss(device='cpu')
+            wp_gt_raw = waypoints if waypoints is not None else (targets.get('waypoints') if isinstance(targets, dict) else None)
+            
+            if wp_gt_raw is not None:
+                gt_wp_i = wp_gt_raw[i:i+1].cpu()
+                gt_hm = hm_gen.generate_heatmap(gt_wp_i, H, W).squeeze().numpy()
+                gt_hm = (gt_hm - gt_hm.min()) / (gt_hm.max() - gt_hm.min() + 1e-6)
+                can_gt = img_bgr[i].copy()
+                can_gt = cv2.addWeighted(cv2.applyColorMap((gt_hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_gt, 0.4, 0)
+                cv2.putText(can_gt, "GT HM", (10, 40), 0, 1.2, (255,255,255), 2)
+                mosaic[y_off:y_off+H, 2*W:3*W] = can_gt
+            
+            # Pred Heatmap
+            hm_tensor = output['heatmap']
+            if isinstance(hm_tensor, dict): hm_tensor = hm_tensor.get('heatmap', next(iter(hm_tensor.values())))
+            hm_i = hm_tensor[i].detach().cpu().numpy()
+            if hm_i.ndim == 3: hm_i = hm_i.squeeze(0) if hm_i.shape[0] == 1 else hm_i.mean(axis=0)
+            if hm_i.ndim == 2 and hm_i.size > 0:
+                hm_i = np.nan_to_num(hm_i.astype(np.float32))
+                hm = cv2.resize(hm_i, (W, H))
+                hm = (hm - hm.min()) / (hm.max() - hm.min() + 1e-6)
+                can_pred = img_bgr[i].copy()
+                can_pred = cv2.addWeighted(cv2.applyColorMap((hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_pred, 0.4, 0)
+                cv2.putText(can_pred, "PRED HM", (10, 40), 0, 1.2, (255,255,255), 2)
+                mosaic[y_off:y_off+H, 3*W:4*W] = can_pred
 
     Path(save_path).parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(save_path), mosaic)
@@ -306,5 +359,4 @@ def save_one_box(box, im, file):
     x1, y1, x2, y2 = np.array(box).astype(int); crop = im[y1:y2, x1:x2]
     cv2.imwrite(str(file), crop); return crop
 
-# Alias
 visualize_batch = plot_batch

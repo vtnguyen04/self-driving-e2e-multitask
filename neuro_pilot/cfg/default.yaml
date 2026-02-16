@@ -2,39 +2,46 @@
 # Centralized hyperparameters for training, validation, and loss calculation.
 # Aligned with Ultralytics standards (Architecture vs. Training separation).
 
-# Loss Gains -----------------------------------------------------------------------------------------------------------
-box: 7.5       # (float) box loss gain
-cls: 0.5       # (float) classification loss gain
-dfl: 1.5       # (float) distribution focal loss gain
+loss:
+  lambda_det: 1.0     # Detection loss multiplier
+  lambda_traj: 0.05   # Trajectory loss multiplier
+  lambda_heatmap: 1.0 # Heatmap loss multiplier
+  lambda_smooth: 0.1  # Smoothness loss multiplier
+  lambda_cls: 0.5     # Classification loss multiplier
+  lambda_gate: 0.5    # Command gating loss multiplier
 
-# NeuroPilot Specific Loss Gains
-lambda_det: 1.0     # Detection loss multiplier
-lambda_traj: 0.05   # Trajectory loss multiplier
-lambda_heatmap: 1.0 # Heatmap loss multiplier
-lambda_smooth: 0.1  # Smoothness loss multiplier
-lambda_cls: 0.5     # Classification loss multiplier
-lambda_gate: 0.5    # Command gating loss multiplier
+trainer:
+  max_epochs: 300
+  learning_rate: 0.01       # initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
+  lr_final: 0.01            # final learning rate (lr0 * lrf)
+  momentum: 0.937           # SGD momentum/Adam beta1
+  weight_decay: 0.0005      # optimizer weight decay 5e-4
+  warmup_epochs: 3.0        # warmup epochs (fractions ok)
+  warmup_momentum: 0.8      # warmup initial momentum
+  warmup_bias_lr: 0.1       # warmup initial bias lr
+  lr_schedule: "cosine"     # learning rate schedule
+  use_amp: True
+  use_ema: True
+  ema_decay: 0.999
+  experiment_name: "default"
 
-# Training Hyperparameters ---------------------------------------------------------------------------------------------
-lr0: 0.01       # initial learning rate
-lrf: 0.01       # final LR fraction
-momentum: 0.937 # momentum
-weight_decay: 0.0005
-warmup_epochs: 3.0
-warmup_momentum: 0.8
-warmup_bias_lr: 0.1
-
-# Augmentation ---------------------------------------------------------------------------------------------------------
-hsv_h: 0.015
-hsv_s: 0.7
-hsv_v: 0.4
-degrees: 0.0
-translate: 0.1
-scale: 0.5
-shear: 0.0
-perspective: 0.0
-flipud: 0.0
-fliplr: 0.5
-mosaic: 1.0
-mixup: 0.0
-copy_paste: 0.0
+data:
+  image_size: 224
+  batch_size: 32
+  num_workers: 4
+  augment:
+    enabled: True
+    rotate_deg: 5.0
+    translate: 0.1
+    scale: 0.5
+    shear: 0.0
+    perspective: 0.0
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.0
+    copy_paste: 0.0
+    noise_prob: 0.4
+    blur_prob: 0.1

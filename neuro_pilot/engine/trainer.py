@@ -7,7 +7,7 @@ from pathlib import Path
 from neuro_pilot.utils.logger import logger
 
 from neuro_pilot.utils.losses import CombinedLoss
-from neuro_pilot.utils.torch_utils import save_checkpoint, load_checkpoint
+from neuro_pilot.utils.torch_utils import save_checkpoint
 from .logger import MetricLogger
 from .callbacks import CallbackList, LoggingCallback, CheckpointCallback, VisualizationCallback, PlottingCallback
 from .validator import Validator
@@ -35,23 +35,24 @@ class Trainer(BaseTrainer):
     def setup(self):
         """Setup model, loss, optimizer, and callbacks."""
         # 1. Model
+        from neuro_pilot.nn.tasks import DetectionModel
         if hasattr(self.cfg, 'model_config_path') and self.cfg.model_config_path and Path(self.cfg.model_config_path).suffix in ['.yaml', '.yml']:
-             from neuro_pilot.models.yolo import DetectionModel
              logger.info(f"Loading dynamic model from {self.cfg.model_config_path}")
              self.model = DetectionModel(self.cfg.model_config_path, ch=3, verbose=True).to(self.device)
         else:
-             self.model = NeuroPilotNet(
-                num_classes=self.num_classes,
-                backbone_name=self.cfg.backbone.name,
-                dropout_prob=getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0)
+             logger.info("Loading default yolo_style model")
+             self.model = DetectionModel(
+                cfg="neuro_pilot/cfg/models/yolo_style.yaml",
+                nc=self.num_classes,
+                verbose=True
              ).to(self.device)
 
         if hasattr(self.model, 'info'):
             self.model.info()
 
         # 2. Loss
-        from neuro_pilot.utils.losses import CombinedLoss
         self.criterion = CombinedLoss(self.cfg, self.model, device=self.device)
+        self.loss_names = ["total", "traj", "det", "hm", "L1"]
 
         # 3. Optimizer
         self.optimizer = optim.AdamW(
@@ -67,10 +68,15 @@ class Trainer(BaseTrainer):
 
         # 5. Callbacks
         ckpt_dir = self.save_dir
+        self.val_logger_obj = MetricLogger(ckpt_dir, "val", "val_metrics.csv")
+        viz_cb = VisualizationCallback(ckpt_dir / "viz")
+        if hasattr(self.model, 'names'):
+            viz_cb.names = self.model.names
+            
         self.callbacks = CallbackList([
             LoggingCallback(MetricLogger(ckpt_dir, "train", "train_metrics.csv")),
             CheckpointCallback(ckpt_dir, self.cfg),
-            VisualizationCallback(ckpt_dir / "viz"),
+            viz_cb,
             PlottingCallback(ckpt_dir)
         ])
 
@@ -101,9 +107,23 @@ class Trainer(BaseTrainer):
         self.model.train()
         self.callbacks.on_epoch_start(self)
 
-        self.pbar = TQDM(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {self.epoch}/{self.cfg.trainer.max_epochs}")
+        nw = max(round(self.cfg.trainer.warmup_epochs * len(dataloader)), 100)
+        
+        desc = f"{self.epoch:>10}/{self.cfg.trainer.max_epochs - 1:<10}"
+        self.pbar = TQDM(enumerate(dataloader), total=len(dataloader), desc=desc)
         for batch_idx, batch in self.pbar:
             self.callbacks.on_batch_start(self)
+            
+            ni = batch_idx + self.epoch * len(dataloader) # number integrated batches (since train start)
+            
+            # Warmup
+            if ni <= nw:
+                xi = [0, nw]  # x interp
+                for j, x in enumerate(self.optimizer.param_groups):
+                    # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                    x["lr"] = np.interp(ni, xi, [self.cfg.trainer.warmup_bias_lr if j == 0 else 0.0, self.cfg.trainer.learning_rate])
+                    if "momentum" in x:
+                        x["momentum"] = np.interp(ni, xi, [self.cfg.trainer.warmup_momentum, self.cfg.trainer.momentum])
 
             img = batch['image'].to(self.device)
             cmd = batch['command'].to(self.device)
@@ -114,7 +134,7 @@ class Trainer(BaseTrainer):
                 valid_batch_size = img.size(0)
                 if valid_batch_size == 0: continue
 
-                output = self.model(img, cmd, return_intermediate=True)
+                output = self.model(img, cmd=cmd, return_intermediate=True)
                 targets = {
                     'waypoints': gt_waypoints,
                     'bboxes': batch['bboxes'],
@@ -130,12 +150,7 @@ class Trainer(BaseTrainer):
                 loss_dict = self.criterion.advanced(output, targets)
                 loss = loss_dict['total']
 
-                # Debug scalar issue
-                if batch_idx == 0:
-                     logger.debug(f"Loss details: shape={loss.shape}, value={loss}")
-
             # Safe scalar backward
-            # loss.mean() ensures it's a scalar even if it's (1,)
             self.scaler.scale(loss.mean()).backward()
             self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.trainer.grad_clip_norm)
@@ -146,9 +161,11 @@ class Trainer(BaseTrainer):
             if self.scheduler and isinstance(self.scheduler, optim.lr_scheduler.OneCycleLR):
                 self.scheduler.step()
 
-            # L1 Error for logging
-            with torch.no_grad():
-                pred_path = output.get('waypoints', output.get('control_points')).float()
+            # L1 Error for logging (only if trajectory head exists)
+            l1_err = 0.0
+            pred_path = output.get('waypoints', output.get('control_points'))
+            if pred_path is not None:
+                pred_path = pred_path.float()
                 if gt_waypoints.shape[1] != pred_path.shape[1]:
                      gt = torch.nn.functional.interpolate(gt_waypoints.permute(0,2,1), size=pred_path.shape[1], mode='linear').permute(0,2,1)
                 else: gt = gt_waypoints
@@ -156,15 +173,40 @@ class Trainer(BaseTrainer):
 
             # Expose metrics for callbacks
             self.batch_metrics = {k: v.item() if isinstance(v, torch.Tensor) else v for k, v in loss_dict.items()}
-            self.batch_metrics['L1'] = l1_err
-            self.batch_metrics['lr'] = self.optimizer.param_groups[0]['lr']
+            if pred_path is not None:
+                self.batch_metrics['L1'] = l1_err
+            
+            # Progress bar update (Ultralytics style)
+            mem = f"{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G"
+            
+            # Format metrics for the bar (aligned with headers)
+            # headers: [Epoch, GPU_mem] + self.loss_names + [Instances, Size]
+            # loss_names: [total, traj, det, hm, L1]
+            metrics_vals = [
+                f"{self.batch_metrics['total']:.4g}",
+                f"{self.batch_metrics.get('traj', 0):.4g}",
+                f"{self.batch_metrics.get('det', 0):.4g}",
+                f"{self.batch_metrics.get('heatmap', 0):.4g}",
+                f"{l1_err:.4g}"
+            ]
+            
+            pbar_desc = ("%11s" * 2 + "%11s" * len(metrics_vals) + "%11s" * 2) % (
+                f"{self.epoch}/{self.cfg.trainer.max_epochs - 1}",
+                mem,
+                *metrics_vals,
+                f"{img.shape[0]}",
+                f"{img.shape[-1]}"
+            )
+            self.pbar.set_description(pbar_desc)
 
+            self.batch_metrics['lr'] = self.optimizer.param_groups[0]['lr']
             self.callbacks.on_batch_end(self)
 
         self.callbacks.on_epoch_end(self)
 
     def train(self):
         """Standard Ultralytics-style training entry point."""
+        self.setup()
         from neuro_pilot.data import prepare_dataloaders
         train_loader, val_loader = prepare_dataloaders(self.cfg)
         return self.fit(train_loader, val_loader)
@@ -173,36 +215,48 @@ class Trainer(BaseTrainer):
         logger.info(f"Starting training on {self.device}")
         self.initialize_anchors(train_loader)
 
-        # Validator
-        self.validator = Validator(self.cfg, self.ema.module if self.ema else self.model, self.criterion, self.device)
-
-        # Scheduler
-        if hasattr(self.cfg.trainer, 'lr_schedule') and self.cfg.trainer.lr_schedule == 'onecycle':
-             self.scheduler = optim.lr_scheduler.OneCycleLR(self.optimizer, max_lr=self.cfg.trainer.learning_rate, steps_per_epoch=len(train_loader), epochs=self.cfg.trainer.max_epochs, pct_start=0.3)
-        else:
-             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.cfg.trainer.max_epochs)
+        # Scheduler (Ultralytics Cosine)
+        from neuro_pilot.utils.torch_utils import one_cycle
+        lf = one_cycle(1, self.cfg.trainer.lr_final, self.cfg.trainer.max_epochs)
+        self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lf)
+        self.scheduler.last_epoch = self.epoch - 1
 
         self.callbacks.on_train_start(self)
 
         early_stop_counter = 0
-        best_loss_global = float('inf')
+        best_fitness_global = -float('inf')
 
-        for epoch in range(self.start_epoch, self.cfg.trainer.max_epochs):
+        # Print Header
+        logger.info(self.progress_string())
+
+        for epoch in range(self.epoch, self.cfg.trainer.max_epochs):
             self.epoch = epoch
             self.train_one_epoch(train_loader)
 
             # Validation
             self.callbacks.on_val_start(self)
-            self.val_loss, val_l1 = self.validator(val_loader, self.val_logger_obj)
+            val_metrics = self.validator(val_loader)
+            self.val_loss = val_metrics.get('avg_loss', 0.0)
+            self.val_metrics = val_metrics
+            
+            # Update fitness (Higher is better)
+            from neuro_pilot.utils.metrics import calculate_fitness
+            self.fitness = calculate_fitness(val_metrics)
+            val_metrics['fitness'] = self.fitness
+
+            # Log validation to CSV
+            for k, v in val_metrics.items():
+                self.val_logger_obj.log_batch({k: v})
             self.val_logger_obj.log_epoch(epoch, "val")
+
             self.callbacks.on_val_end(self) # Checkpointing happens here
 
-            if self.scheduler and not isinstance(self.scheduler, optim.lr_scheduler.OneCycleLR):
+            if self.scheduler:
                 self.scheduler.step()
 
-            # Early Stopping Check
-            if self.val_loss < best_loss_global:
-                best_loss_global = self.val_loss
+            # Early Stopping Check (based on fitness)
+            if self.fitness > best_fitness_global:
+                best_fitness_global = self.fitness
                 early_stop_counter = 0
             else:
                 early_stop_counter += 1
@@ -214,17 +268,3 @@ class Trainer(BaseTrainer):
         self.callbacks.on_train_end(self)
         logger.info("Training complete.")
 
-    def save_checkpoint(self, path, loss, is_best=False):
-        # Delegate to utils
-        state_dict = self.ema.module.state_dict() if self.ema else self.model.state_dict()
-        checkpoint = {
-            'epoch': self.epoch,
-            'state_dict': state_dict,
-            'optimizer': self.optimizer.state_dict(),
-            'loss': loss,
-            'scaler': self.scaler.state_dict() if self.scaler else None,
-        }
-        if self.ema:
-            checkpoint['ema'] = self.ema.module.state_dict()
-            checkpoint['model'] = self.model.state_dict()
-        save_checkpoint(checkpoint, is_best=is_best, filename=path.name, save_dir=str(path.parent))
