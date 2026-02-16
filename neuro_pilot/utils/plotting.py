@@ -270,7 +270,8 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             # 3. Apply NMS (conf_thres should be enough to filter noise)
             pred_scores = output['scores'].sigmoid()
             combined = torch.cat([pred_bboxes.permute(0, 2, 1), pred_scores], dim=1)
-            detections = non_max_suppression(combined, conf_thres=conf_thres, iou_thres=0.45)
+            # Use standard conf_thres (0.25) and limit det to 50 for visualization clarity
+            detections = non_max_suppression(combined, conf_thres=max(conf_thres, 0.25), iou_thres=0.45, max_det=50)
 
     for i in range(N):
         y_off = i * H

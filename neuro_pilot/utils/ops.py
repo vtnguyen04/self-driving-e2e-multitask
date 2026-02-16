@@ -240,10 +240,10 @@ def non_max_suppression(
             i = TorchNMS.fast_nms(boxes, scores, iou_thres, iou_func=probiou)
         else:
             boxes = x[:, :4] + c  # boxes (offset by class)
-            if "torchvision" in sys.modules:
+            try:
                 import torchvision
                 i = torchvision.ops.nms(boxes, scores, iou_thres)
-            else:
+            except (ImportError, RuntimeError):
                 i = TorchNMS.nms(boxes, scores, iou_thres)
         i = i[:max_det]
 

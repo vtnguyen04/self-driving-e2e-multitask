@@ -138,19 +138,21 @@ class TaskAlignedAssigner(nn.Module):
         return target_labels, target_bboxes, target_scores
 
     def select_candidates_in_gts(self, xy_centers, gt_bboxes, mask_gt, eps=1e-9):
-        gt_bboxes_xywh = xyxy2xywh(gt_bboxes)
-        wh_mask = gt_bboxes_xywh[..., 2:] < self.stride[0]
-        gt_bboxes_xywh[..., 2:] = torch.where(
-            (wh_mask * mask_gt).bool(),
-            torch.tensor(self.stride_val, dtype=gt_bboxes_xywh.dtype, device=gt_bboxes_xywh.device),
-            gt_bboxes_xywh[..., 2:],
-        )
-        gt_bboxes = xywh2xyxy(gt_bboxes_xywh)
-
+        """Select positive anchors that are within GT boxes."""
+        # xy_centers: [na, 2] in pixels
+        # gt_bboxes: [bs, n_max_boxes, 4] in pixels
         n_anchors = xy_centers.shape[0]
         bs, n_boxes, _ = gt_bboxes.shape
-        lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2)
-        bbox_deltas = torch.cat((xy_centers[None] - lt, rb - xy_centers[None]), dim=2).view(bs, n_boxes, n_anchors, -1)
+        
+        # Split GT into left-top and right-bottom
+        lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2) # [bs*n_boxes, 1, 2] each
+        
+        # Calculate distance from anchor center to GT boundaries
+        # centers: [1, na, 2], lt/rb: [bs*n_boxes, 1, 2]
+        bbox_deltas = torch.cat((xy_centers[None] - lt, rb - xy_centers[None]), dim=2)
+        bbox_deltas = bbox_deltas.view(bs, n_boxes, n_anchors, -1)
+        
+        # Anchor is inside if all deltas > 0
         return bbox_deltas.amin(3).gt_(eps)
 
     def select_highest_overlaps(self, mask_pos, overlaps, n_max_boxes, align_metric):

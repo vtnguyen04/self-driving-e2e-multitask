@@ -121,8 +121,11 @@ class Detect(BaseHead):
         return dist2bbox(bboxes, anchors, xywh=xywh and not self.end2end and not self.xyxy, dim=1)
 
     def bias_init(self):
+        """Initialize Detect() biases, standard YOLO procedure."""
         for i, (a, b) in enumerate(zip(self.one2many["box_head"], self.one2many["cls_head"])):
             a[-1].bias.data[:] = 1.0  # box
+            # Standard YOLO bias init: log(freq / (1-freq)) or log(5 / nc / (imgsz/stride)^2)
+            # This ensures confidence starts very low (~0.01)
             b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
         if self.end2end:
             for i, (a, b) in enumerate(zip(self.one2one["box_head"], self.one2one["cls_head"])):
