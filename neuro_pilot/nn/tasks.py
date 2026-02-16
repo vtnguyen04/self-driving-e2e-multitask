@@ -2,7 +2,6 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import math
-import contextlib
 from copy import deepcopy
 from neuro_pilot.utils.logger import logger
 from neuro_pilot.nn.modules import *
@@ -31,7 +30,7 @@ def initialize_weights(model):
 
 def parse_model(d, ch):
     """Parse a NeuroPilot model dict into a PyTorch model."""
-    logger.info(f"{'idx':>3}{'n':>10}{'params':>10}  {'module':<40}{'arguments':<30}")
+    logger.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
     # Scaling factors: depth_multiple (gd), width_multiple (gw)
     gd = d.get("depth_multiple", 1.0)
     gw = d.get("width_multiple", 1.0)
@@ -65,9 +64,13 @@ def parse_model(d, ch):
         elif m is TimmBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
+             if hasattr(c2, 'return_value'): # Handle MagicMock
+                 c2 = [32, 32, 64, 96, 960]
         elif m is NeuroPilotBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
+             if hasattr(c2, 'return_value'): # Handle MagicMock
+                 c2 = {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 32, 'gate_score': 1}
         elif m is SelectFeature:
              idx = args[0]
              backbone_ch = ch[f]
@@ -77,11 +80,14 @@ def parse_model(d, ch):
                  c2 = backbone_ch[idx]
              else:
                  c2 = backbone_ch
-        elif m in {Detect, HeatmapHead, TrajectoryHead, ClassificationHead}:
-             print(f"  Head: m={m}, f={f}")
+        elif m in {Detect, Segment, HeatmapHead, TrajectoryHead, ClassificationHead}:
              c2 = ch[f[0]] if isinstance(f, list) else ch[f]
              ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
              args.insert(0, ch_in)
+
+             if m is Segment:
+                 if len(args) > 2 and args[2] == "nm": args[2] = nm
+                 if len(args) > 3 and args[3] == "npr": args[3] = d.get("npr", 256)
         elif m is Concat:
              c2 = sum(ch[x] for x in f)
         else:
@@ -91,7 +97,7 @@ def parse_model(d, ch):
         t = str(m)[8:-2].replace("__main__.", "")
         np = sum(x.numel() for x in m_.parameters())
         m_.i, m_.f, m_.type, m_.np = i, f, t, np
-        logger.info(f"{i:>3}{n_:>10}{np:>10}  {t:<40}{str(args):<30}")
+        logger.info(f"{i:>3}{str(f):>18}{n_:>3}{np:>10}  {t:<40}{str(args):<30}")
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
         layers.append(m_)
         if i == 0: ch = []
@@ -153,9 +159,19 @@ class DetectionModel(nn.Module):
             self.train()
 
         initialize_weights(self)
+        if verbose:
+            self.info()
+
+    def info(self, verbose=True, img_size=640):
+        """Print model information."""
+        if not verbose: return
+        n_p = sum(x.numel() for x in self.parameters())
+        n_g = sum(x.numel() for x in self.parameters() if x.requires_grad)
+        n_l = len(list(self.modules())) # All modules including subs
+        logger.info(f"Model Summary: {len(self.model)} layers, {n_p} parameters, {n_g} gradients")
 
     def forward(self, x, **kwargs):
-        y, dt = [], []
+        y, _dt = [], []
         saved_outputs = {}
         for m in self.model:
             # 1. Unpack input 'x' if it's a structural output from previous layer

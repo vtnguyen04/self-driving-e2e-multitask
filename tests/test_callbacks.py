@@ -29,36 +29,30 @@ class TestCallbacks(unittest.TestCase):
         trainer = MagicMock()
         trainer.epoch = 1
         trainer.val_loss = 0.5
+        trainer.fitness = -0.5 # Higher is better
+        trainer.last = self.test_dir / "last.pt"
 
         # Mock Config
         cfg = MagicMock()
-        cfg.trainer.checkpoint_top_k = 2
 
         cb = CheckpointCallback(self.test_dir, cfg)
 
-        # Epoch 1: Loss 0.5 (Best)
+        # Epoch 1: Fitness -0.5 (Best)
         cb.on_val_end(trainer)
         trainer.save_checkpoint.assert_called()
-        self.assertEqual(cb.best_loss, 0.5)
-        self.assertEqual(len(cb.top_k), 1)
+        self.assertEqual(cb.best_fitness, -0.5)
 
-        # Epoch 2: Loss 0.3 (New Best)
+        # Epoch 2: Fitness -0.3 (New Best)
         trainer.epoch = 2
-        trainer.val_loss = 0.3
+        trainer.fitness = -0.3
         cb.on_val_end(trainer)
-        self.assertEqual(cb.best_loss, 0.3)
-        self.assertEqual(len(cb.top_k), 2)
+        self.assertEqual(cb.best_fitness, -0.3)
 
-        # Epoch 3: Loss 0.6 (Worse than 0.5 and 0.3, but top_k=2)
-        # Should replace 0.5? No, top_k should keep lowest.
-        # Current top_k: [(0.3, 2, path), (0.5, 1, path)]
-        # New: 0.6.
-        # 0.6 > 0.5 (worst). Should NOT be added.
+        # Epoch 3: Fitness -0.6 (Worse)
         trainer.epoch = 3
-        trainer.val_loss = 0.6
+        trainer.fitness = -0.6
         cb.on_val_end(trainer)
-        self.assertEqual(len(cb.top_k), 2)
-        self.assertEqual(cb.top_k[-1][0], 0.5) # Worst kept is 0.5
+        self.assertEqual(cb.best_fitness, -0.3) # Best remains -0.3
 
     def test_logging_callback(self):
         logger = MagicMock()

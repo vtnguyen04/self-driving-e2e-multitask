@@ -1,9 +1,8 @@
 import unittest
 import torch
 import numpy as np
-import os
-from unittest.mock import MagicMock, patch
-from neuro_pilot.utils.plotting import Annotator, visualize_batch, colors
+from unittest.mock import patch
+from neuro_pilot.utils.plotting import Annotator, visualize_batch
 
 class TestPlotting(unittest.TestCase):
     def test_annotator_basic(self):
@@ -20,11 +19,14 @@ class TestPlotting(unittest.TestCase):
             mock_ts.return_value = ((50, 15), 5)
             batch = {
                 'image': torch.zeros(1, 3, 64, 64),
-                'bboxes': torch.tensor([[0, 0, 0.5, 0.5, 0.5, 0.5]]),
+                'bboxes': torch.tensor([[[0.5, 0.5, 0.2, 0.2]]]), # [B, N, 4] normalized
                 'waypoints': torch.zeros(1, 10, 2),
-                'categories': torch.zeros(1)
+                'categories': torch.tensor([[1]])
             }
-            output = [torch.tensor([[0, 0, 10, 10, 0.9, 0]])]
+            output = {
+                'bboxes': torch.randn(1, 100, 14 + 4), # Dummy YOLO output (N_anchors, nc+4)
+                'waypoints': torch.zeros(1, 10, 2)
+            }
             save_path = "test_batch.jpg"
             visualize_batch(batch, output, save_path)
             self.assertTrue(True)
