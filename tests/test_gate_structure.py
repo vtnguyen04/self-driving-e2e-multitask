@@ -13,7 +13,6 @@ sys.modules["torchvision.ops"] = MagicMock()
 
 import unittest
 import torch
-import torch.nn as nn
 from neuro_pilot.nn.modules.attention import CommandGate, VLFusion
 
 class TestCommandGate(unittest.TestCase):
@@ -37,7 +36,7 @@ class TestCommandGate(unittest.TestCase):
 
         # 1. Run with normal gate
         out = fusion(x, lang)
-        out_normal, gate_out = out["feats"], out["gate_score"]
+        out_normal, _gate_out = out["feats"], out["gate_score"]
         self.assertEqual(out_normal.shape, x.shape)
 
         # 2. Mock gate to return 0 (Closed Gate)

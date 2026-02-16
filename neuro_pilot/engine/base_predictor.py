@@ -1,11 +1,4 @@
 from __future__ import annotations
-import torch
-import numpy as np
-import cv2
-from pathlib import Path
-from typing import List, Union, Optional
-from neuro_pilot.utils.logger import logger
-from neuro_pilot.engine.results import Results
 
 class BasePredictor:
     """

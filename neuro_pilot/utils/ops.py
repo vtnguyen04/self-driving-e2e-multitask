@@ -2,7 +2,6 @@ import sys
 import time
 import re
 import torch
-import torch.nn.functional as F
 import numpy as np
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
@@ -154,8 +153,7 @@ def non_max_suppression(
     """Perform non-maximum suppression (NMS) on prediction results.
     Adapted from Ultralytics (AGPL-3.0).
     """
-    import time
-    from neuro_pilot.utils.metrics import box_iou, probiou
+    from neuro_pilot.utils.metrics import probiou
 
     # Checks
     assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"

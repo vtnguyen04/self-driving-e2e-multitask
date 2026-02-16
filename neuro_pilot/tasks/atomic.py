@@ -1,7 +1,6 @@
 from neuro_pilot.engine.task import BaseTask, TaskRegistry
 import torch.nn as nn
 from neuro_pilot.nn.modules import TrajectoryHead
-from neuro_pilot.utils.losses import HeatmapWaypointLoss
 
 @TaskRegistry.register("trajectory")
 class TrajectoryTask(BaseTask):

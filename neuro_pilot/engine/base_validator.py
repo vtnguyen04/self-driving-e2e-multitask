@@ -1,9 +1,6 @@
 from __future__ import annotations
 import torch
 from pathlib import Path
-from typing import Dict, Any, Optional
-from neuro_pilot.utils.logger import logger
-from neuro_pilot.utils.metrics import DetectionEvaluator
 
 class BaseValidator:
     """

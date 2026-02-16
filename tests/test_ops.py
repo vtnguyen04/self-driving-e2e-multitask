@@ -51,7 +51,7 @@ class TestOps(unittest.TestCase):
         self.assertEqual(res.shape[0], 1)
 
     def test_box_utils(self):
-        from neuro_pilot.utils.ops import xyxy2xywh, xywh2xyxy, clip_boxes
+        from neuro_pilot.utils.ops import xyxy2xywh, xywh2xyxy
         boxes = torch.tensor([[10.0, 10.0, 20.0, 20.0]])
         wh = xyxy2xywh(boxes)
         self.assertTrue(torch.allclose(wh, torch.tensor([[15.0, 15.0, 10.0, 10.0]])))

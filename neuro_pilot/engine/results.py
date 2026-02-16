@@ -1,7 +1,8 @@
 import numpy as np
 import torch
+import cv2
 from pathlib import Path
-from typing import List, Union, Optional
+from typing import Optional
 from neuro_pilot.utils.plotting import Annotator, colors
 
 class Results:
@@ -41,7 +42,7 @@ class Results:
         # 2. BBoxes
         if boxes and self.boxes is not None:
             for d in self.boxes:
-                c, conf_val, id = int(d[5]), float(d[4]), int(d[5])
+                conf_val, id = float(d[4]), int(d[5])
                 label = (f"{self.names[id]} {conf_val:.2f}" if labels else f"{self.names[id]}") if conf else ""
                 annotator.box_label(d[:4], label, color=colors(id, True))
 

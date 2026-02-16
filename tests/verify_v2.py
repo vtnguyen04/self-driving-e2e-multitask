@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from neuro_pilot.engine.model import NeuroPilot
 from neuro_pilot.models.yolo import DetectionModel
 
 def verify_v2_architecture():

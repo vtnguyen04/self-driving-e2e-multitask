@@ -72,7 +72,6 @@ class TaskRegistry:
 
 
 # Default Implementation for standard NeuroPilot Multitask
-from neuro_pilot.nn.tasks import DetectionModel
 from neuro_pilot.utils.losses import CombinedLoss
 from neuro_pilot.engine.trainer import Trainer
 from neuro_pilot.engine.validator import Validator
@@ -83,6 +82,19 @@ class MultiTask(BaseTask):
     """
     Standard E2E Multitask (Detection + Trajectory + Heatmap).
     """
+    def __init__(self, cfg, overrides=None, backbone=None):
+        super().__init__(cfg, overrides, backbone)
+        self.names = {i: f"class_{i}" for i in range(self.cfg.head.num_classes)}
+        # Try to load real names from dataset YAML
+        if hasattr(self.cfg.data, 'dataset_yaml') and self.cfg.data.dataset_yaml:
+             from neuro_pilot.data.utils import check_dataset
+             try:
+                 data_cfg = check_dataset(self.cfg.data.dataset_yaml)
+                 if 'names' in data_cfg:
+                      self.names = data_cfg['names']
+             except Exception as e:
+                 logger.warning(f"Failed to load names from {self.cfg.data.dataset_yaml}: {e}")
+
     def build_model(self) -> nn.Module:
         # 1. Dynamic YAML Architecture
         model_cfg = self.overrides.get('model_cfg')
@@ -107,7 +119,7 @@ class MultiTask(BaseTask):
              return self.model
 
         # 3. Dynamic Fallback Architecture
-        dropout_prob = self.overrides.get('dropout', getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0))
+        self.overrides.get('dropout', getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0))
         model = DetectionModel(
             cfg="neuro_pilot/cfg/models/yolo_style.yaml", # Default dynamic template
             nc=self.cfg.head.num_classes,

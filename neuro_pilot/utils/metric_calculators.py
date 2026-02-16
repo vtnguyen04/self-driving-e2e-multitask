@@ -1,4 +1,3 @@
-import torch
 from neuro_pilot.utils.metrics import DetectionEvaluator
 
 class DetectionMetricCalculator:

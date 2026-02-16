@@ -1,4 +1,3 @@
-import sys
 import logging
 import argparse
 from neuro_pilot.main import NeuroPilot
@@ -14,7 +13,7 @@ def main():
     train_parser.add_argument("--model", type=str, default="yolo_style.yaml", help="Model config (yaml) or weights (pt)")
     train_parser.add_argument("--data", type=str, default=None, help="Data config or path")
     train_parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
-    train_parser.add_argument("--batch", type=int, default=16, help="Batch size")
+    train_parser.add_argument("--batch", type=int, default=128, help="Batch size")
     train_parser.add_argument("--device", type=str, default="cuda", help="Device (cuda/cpu)")
     train_parser.add_argument("--name", type=str, default="exp", help="Experiment name")
 

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from copy import deepcopy
 import logging
 
 logger = logging.getLogger(__name__)

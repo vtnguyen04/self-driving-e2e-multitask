@@ -1,6 +1,5 @@
 import torch
 import torch.onnx
-import timm
 import argparse
 from neuro_pilot.models import NeuroPilotE2ENet
 from neuro_pilot.cfg.schema import AppConfig

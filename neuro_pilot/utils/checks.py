@@ -4,17 +4,10 @@ import math
 import os
 import platform
 import re
-import shutil
-import subprocess
-import sys
-import time
 from importlib import metadata
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Optional, Union, List, Tuple
 
 import torch
-import numpy as np
 
 # Global Constants
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ["Darwin", "Linux", "Windows"])
@@ -138,3 +131,10 @@ def find_file(file: str | Path) -> str:
             return str(d / file.name)
 
     return str(file)
+
+def print_args(args: dict):
+    """Print training arguments in a professional Ultralytics format."""
+    from neuro_pilot.utils.logger import logger
+    logger.info("Training Arguments:")
+    for k, v in args.items():
+        logger.info(f"{k:>20}: {v}")

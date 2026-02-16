@@ -54,6 +54,7 @@ class NeuroPilotBackbone(nn.Module):
     Standard NeuroPilot Shared Backbone (timm + PANet + Prompting).
     Optimized for multi-task composite architectures.
     """
+    forward_with_kwargs = True
     @staticmethod
     def get_channels(model_name):
         # Maps keys to channels for NeuroPilotBackbone
@@ -61,7 +62,7 @@ class NeuroPilotBackbone(nn.Module):
             return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 32, 'gate_score': 1}
         return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 48, 'gate_score': 1}
 
-    def __init__(self, backbone_name='mobilenetv4_conv_small', num_commands=4, dropout_prob=0.0):
+    def __init__(self, backbone_name='mobilenetv4_conv_medium', num_commands=4, dropout_prob=0.0):
         super().__init__()
         self.backbone = timm.create_model(backbone_name, pretrained=True, features_only=True)
         feat_info = self.backbone.feature_info.channels()
@@ -80,7 +81,7 @@ class NeuroPilotBackbone(nn.Module):
         self.vl_fusion = VLFusion(self.neck_dim, self.neck_dim)
         self.dropout_prob = dropout_prob
 
-    def forward(self, img, cmd_onehot=None):
+    def forward(self, img, cmd_onehot=None, **kwargs):
         B = img.shape[0]
         feats = self.backbone(img)
         c2, c3, c4, c5 = feats[1], feats[2], feats[3], feats[4]
@@ -90,12 +91,15 @@ class NeuroPilotBackbone(nn.Module):
         p3 = self.c3k2_p3(torch.cat([self.lat_c3(c3), self.upsample(p4)], dim=1))
 
         if cmd_onehot is None:
+             cmd_onehot = kwargs.get('cmd', kwargs.get('command'))
+
+        if cmd_onehot is None:
              cmd_idx = torch.zeros(B, dtype=torch.long, device=img.device)
         else:
              cmd_idx = cmd_onehot.argmax(dim=1)
 
         # Language Context Integration
-        lang_feats = self.prompt_encoder(cmd_idx) # [B, 1, neck_dim]
-        out = self.vl_fusion(p3, lang_feats)
+        lang_feats = self.prompt_encoder(cmd_idx, **kwargs) # [B, 1, neck_dim]
+        out = self.vl_fusion(p3, lang_feats=lang_feats, **kwargs)
         p3_p, gate_score = out["feats"], out["gate_score"]
         return {'p3': p3_p, 'p4': p4, 'p5': p5, 'c2': c2, 'gate_score': gate_score}

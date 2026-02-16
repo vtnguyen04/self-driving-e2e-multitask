@@ -1,7 +1,5 @@
 
 import torch
-import numpy as np
-from models import BFMCE2ENet
 
 def detect_intersection_by_divergence(model, image_tensor):
     """

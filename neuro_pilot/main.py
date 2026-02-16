@@ -1,23 +1,14 @@
 import argparse
 import sys
 from pathlib import Path
-import yaml
 import logging
-from neuro_pilot.utils.logger import logger, set_logger
+from neuro_pilot.utils.logger import logger
 
 # Ensure root is in path if running from here (packaging handles this usually, but for dev...)
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from neuro_pilot.engine.trainer import Trainer
-from neuro_pilot.engine.validator import Validator
-from neuro_pilot.cfg.schema import AppConfig
-from neuro_pilot.data import prepare_dataloaders
-
-def load_config():
-    """Load default application configuration."""
-    return AppConfig()
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +19,11 @@ def main():
     parser.add_argument('model', type=str, nargs='?', help='Model config file (yaml) or weights (pt)')
     parser.add_argument('--task', type=str, default=None, help='Task name (e.g. multitask, detect)')
     parser.add_argument('--epochs', type=int, default=50, help='Max epochs')
-    parser.add_argument('--batch', type=int, default=16, help='Batch size')
+    parser.add_argument('--batch', type=int, default=128, help='Batch size')
     parser.add_argument('--list-tasks', action='store_true', help='List available registered tasks')
     args = parser.parse_args()
 
     # Dynamic Task Discovery
-    import neuro_pilot.tasks
     from neuro_pilot.engine.task import TaskRegistry
 
     if args.list_tasks:

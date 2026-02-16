@@ -1,12 +1,9 @@
 import torch
 import cv2
 import numpy as np
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
-from typing import List, Optional
-from neuro_pilot.cfg.schema import DataConfig
+from typing import List
 from pydantic import BaseModel
 
 class Sample(BaseModel):
@@ -231,33 +228,37 @@ class NeuroPilotDataset(Dataset):
         img_t = cv2.imread(str(img_path))
         if img_t is None:
              # print(f"Warning: Could not load {sample_t.image_path}")
-             img_t = np.zeros((224, 224, 3), dtype=np.uint8)
+             img_t = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
         else:
              img_t = cv2.cvtColor(img_t, cv2.COLOR_BGR2RGB)
-             # Resize to 224x224 to match Labeler's assumed coordinate space
-             img_t = cv2.resize(img_t, (224, 224))
+             # Resize to configured imgsz
+             img_t = cv2.resize(img_t, (self.imgsz, self.imgsz))
 
         # Transform
         # Bboxes are stored in 224x224 pixel space (from Labeler)
-        # No scaling needed as we resized image to 224x224
+        # We must scale them to self.imgsz
+        scale = self.imgsz / 224.0
 
         pixel_bboxes = []
         for box in sample_t.bboxes:
             if len(box) >= 4:
-                x, y, w, h = box[0], box[1], box[2], box[3]
+                x, y, w, h = box[0] * scale, box[1] * scale, box[2] * scale, box[3] * scale
 
                 # Clip strictly to image dims to avoid Albumentations errors
-                x = max(0, min(x, 224 - 1))
-                y = max(0, min(y, 224 - 1))
-                w = max(1, min(w, 224 - x))
-                h = max(1, min(h, 224 - y))
+                x = max(0, min(x, self.imgsz - 1))
+                y = max(0, min(y, self.imgsz - 1))
+                w = max(1, min(w, self.imgsz - x))
+                h = max(1, min(h, self.imgsz - y))
                 pixel_bboxes.append([x, y, w, h])
+
+        # Scale waypoints too
+        scaled_waypoints = [[p[0] * scale, p[1] * scale] for p in sample_t.waypoints]
 
         if self.transform:
             # Prepare standard dictionary for BaseTransform
             labels = {
                 "img": img_t,
-                "waypoints": sample_t.waypoints,
+                "waypoints": scaled_waypoints,
                 "bboxes": pixel_bboxes,
                 "cls": sample_t.categories
             }
@@ -268,20 +269,19 @@ class NeuroPilotDataset(Dataset):
             bboxes_aug = augmented['bboxes']
             categories_id = augmented['categories']
 
-            # Standardize waypoints to [-1, 1] for model if not already (StandardAugmentor doesn't normalize to -1,1 yet)
-            # Re-calculating normalization to be safe
+            # Standardize waypoints to [-1, 1] for model
+            # Normalization factor is self.imgsz / 2
+            norm_factor = self.imgsz / 2.0
             if isinstance(waypoints_t, np.ndarray) and waypoints_t.size > 0:
-                 waypoints_t = (torch.tensor(waypoints_t, dtype=torch.float32) / 112.0) - 1.0
+                 waypoints_t = (torch.tensor(waypoints_t, dtype=torch.float32) / norm_factor) - 1.0
             elif isinstance(waypoints_t, torch.Tensor):
-                 pass # Already tensor, but check scale? Assuming it needs 112 normalization
+                 pass 
             else:
                  waypoints_t = torch.zeros(len(sample_t.waypoints), 2)
 
             # Normalize bboxes to [0, 1] AFTER augmentation for the model
-            # Augmentation returns 'coco' format [x, y, w, h] in pixels (relative to resized image 224)
-            # YOLO models and Visualization expect [cx, cy, w, h] normalized!
             bboxes_t = []
-            img_h, img_w = 224, 224 # Fixed size
+            img_h, img_w = self.imgsz, self.imgsz
             for box in bboxes_aug:
                 bx, by, bw, bh = box
 
@@ -297,14 +297,15 @@ class NeuroPilotDataset(Dataset):
         else:
             img_t = torch.from_numpy(img_t).permute(2, 0, 1).float() / 255.0
             # Normalize waypoints to [-1, 1]
-            waypoints_t = torch.tensor(sample_t.waypoints, dtype=torch.float32)
-            waypoints_t = (waypoints_t / 112.0) - 1.0
+            norm_factor = self.imgsz / 2.0
+            waypoints_t = torch.tensor(scaled_waypoints, dtype=torch.float32)
+            waypoints_t = (waypoints_t / norm_factor) - 1.0
 
             # Normalize bboxes from pixel to [0, 1]
             bboxes_norm = []
             for box in pixel_bboxes:
                 bx, by, bw, bh = box
-                bboxes_norm.append([bx / 224.0, by / 224.0, bw / 224.0, bh / 224.0])
+                bboxes_norm.append([bx / float(self.imgsz), by / float(self.imgsz), bw / float(self.imgsz), bh / float(self.imgsz)])
 
             bboxes_t = torch.tensor(bboxes_norm, dtype=torch.float32) if bboxes_norm else torch.zeros(0, 4)
             categories_t = torch.tensor(sample_t.categories, dtype=torch.long) if sample_t.categories else torch.zeros(0, dtype=torch.long)
@@ -313,10 +314,10 @@ class NeuroPilotDataset(Dataset):
         cmd_onehot = torch.zeros(4)
         cmd_onehot[sample_t.command] = 1.0
 
-        # Calculate Curvature (Cumulative Angular Change)
+        # Calculate Curvature (Cumulative Angular Change) using scaled waypoints
         curvature = 0.0
-        if len(sample_t.waypoints) >= 3:
-            pts = np.array(sample_t.waypoints)
+        if len(scaled_waypoints) >= 3:
+            pts = np.array(scaled_waypoints)
             # Vectors
             vecs = pts[1:] - pts[:-1]
             # Unit vectors
@@ -365,19 +366,17 @@ def create_dummy_dataloader(config, sequence_mode=False):
     # Create fake samples
     samples = []
     import tempfile
-    import os
 
-    # Generate a dummy image in temp
+    # Generate a dummy image in temp (Random noise instead of black)
     tmp_img_path = str(Path(tempfile.gettempdir()) / "dummy.jpg")
-    cv2.imwrite(tmp_img_path, np.zeros((224, 224, 3), dtype=np.uint8))
+    cv2.imwrite(tmp_img_path, (np.random.rand(224, 224, 3) * 255).astype(np.uint8))
 
     for _ in range(32):
         s = Sample(
             image_path=tmp_img_path,
             command=0,
-            speed=0.5,
-            steer=0.0,
-            waypoints=[[i*0.1, i*0.1] for i in range(10)], # 10 pts
+            # Normalize waypoints to pixel space 224 for Sample
+            waypoints=[[112 + i*5, 112 + i*5] for i in range(10)], # 10 pts
             bboxes=[[10, 10, 50, 50]],
             categories=[1]
         )

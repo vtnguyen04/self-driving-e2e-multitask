@@ -1,8 +1,6 @@
 import unittest
 import torch
-import torch.nn as nn
 from neuro_pilot.engine.model import NeuroPilot
-from pathlib import Path
 
 class TestEngine(unittest.TestCase):
     def setUp(self):

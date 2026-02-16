@@ -3,18 +3,17 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from pathlib import Path
-from typing import Any, List, Union, Dict
+from typing import Union
 try:
     from omegaconf import OmegaConf
 except (ImportError, ModuleNotFoundError):
     from unittest.mock import MagicMock
     OmegaConf = MagicMock()
 
-from neuro_pilot.utils.logger import logger
+from neuro_pilot.utils.logger import logger, log_system_info
 from neuro_pilot.engine.task import TaskRegistry
 from neuro_pilot.engine.backend.factory import AutoBackend
 # Ensure default tasks are registered
-import neuro_pilot.engine.task
 
 class NeuroPilot(nn.Module):
     """
@@ -26,8 +25,14 @@ class NeuroPilot(nn.Module):
         model (nn.Module): The underlying PyTorch model (for easy access).
         overrides (dict): Configuration overrides.
     """
+    _system_logged = False  # Class-level flag to avoid spamming logs if multiple instances created
+
     def __init__(self, model: Union[str, Path, nn.Module] = "yolo_style.yaml", task: str = None, **kwargs):
         super().__init__()
+        if not NeuroPilot._system_logged:
+            log_system_info()
+            NeuroPilot._system_logged = True
+            
         self.overrides = kwargs
         self.task_wrapper = None
         self.model = None
@@ -71,13 +76,17 @@ class NeuroPilot(nn.Module):
         final_overrides = {**self.overrides, **(overrides or {})}
 
         # Load Config (Standard logic)
-        from neuro_pilot.main import load_config
+        from neuro_pilot.cfg.schema import load_config, deep_update, AppConfig
         self.cfg_obj = load_config() # Base config
 
         # Apply strict config overrides if provided in overrides
-        if 'model' in final_overrides and isinstance(final_overrides['model'], str):
-             # If model config path is passed
-             pass
+        # We only merge keys that exist in AppConfig to avoid polluting with objects/paths
+        cfg_dict = self.cfg_obj.model_dump()
+        app_keys = set(cfg_dict.keys())
+        config_overrides = {k: v for k, v in final_overrides.items() if k in app_keys}
+        if config_overrides:
+             cfg_dict = deep_update(cfg_dict, config_overrides)
+             self.cfg_obj = AppConfig(**cfg_dict)
 
         self.task_wrapper = TaskClass(self.cfg_obj, overrides=final_overrides)
 
@@ -132,16 +141,19 @@ class NeuroPilot(nn.Module):
              raise RuntimeError("Task not initialized.")
 
         # Update config via Task wrapper
-        from neuro_pilot.main import load_config
-        # We reload config to ensure fresh state, though task might handle this
-        config = self.task_wrapper.cfg
+        from neuro_pilot.cfg.schema import deep_update, AppConfig
 
-        for k, v in kwargs.items():
-            if k == 'epochs': config.trainer.max_epochs = v
-            elif k == 'batch': config.data.batch_size = v
-            elif k == 'device': config.trainer.device = v
-            elif hasattr(config.trainer, k): setattr(config.trainer, k, v)
-            elif hasattr(config.data, k): setattr(config.data, k, v)
+        # Merge kwargs into overrides for the trainer
+        self.overrides = deep_update(self.overrides, kwargs)
+        
+        # Re-apply overrides to task_wrapper
+        self.task_wrapper.overrides = deep_update(self.task_wrapper.overrides, kwargs)
+        
+        # Update task_wrapper config if needed
+        cfg_dict = self.cfg_obj.model_dump()
+        cfg_dict = deep_update(cfg_dict, kwargs)
+        self.cfg_obj = AppConfig(**cfg_dict)
+        self.task_wrapper.cfg = self.cfg_obj
 
         # 1. Get Trainer from Task
         trainer = self.task_wrapper.get_trainer()
@@ -241,7 +253,10 @@ class NeuroPilot(nn.Module):
     @property
     def names(self):
         """Returns class names."""
-        # TODO: Load from dataset/config
+        if hasattr(self.task_wrapper, 'names') and self.task_wrapper.names:
+             return self.task_wrapper.names
+        if hasattr(self.model, 'names') and self.model.names:
+             return self.model.names
         return {i: f"class_{i}" for i in range(14)}
 
     def __call__(self, source, **kwargs):

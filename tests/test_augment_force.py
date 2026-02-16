@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import torch
 import albumentations as A
 import os
 import sys

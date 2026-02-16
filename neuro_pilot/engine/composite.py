@@ -1,9 +1,7 @@
 from __future__ import annotations
-import torch
 import torch.nn as nn
-from typing import List, Dict, Any
+from typing import List, Dict
 from neuro_pilot.engine.task import BaseTask, TaskRegistry
-from neuro_pilot.utils.logger import logger
 from neuro_pilot.nn.modules import NeuroPilotBackbone
 
 class CompositeModel(nn.Module):

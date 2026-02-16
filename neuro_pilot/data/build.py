@@ -1,12 +1,9 @@
 import os
-import math
 import random
-from pathlib import Path
-from typing import Any, Iterator
+from typing import Iterator
 import numpy as np
 import torch
-import torch.distributed as dist
-from torch.utils.data import DataLoader, Sampler, distributed
+from torch.utils.data import DataLoader, distributed
 
 class InfiniteDataLoader(DataLoader):
     """DataLoader that reuses workers for infinite iteration.

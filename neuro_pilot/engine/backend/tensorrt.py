@@ -9,7 +9,7 @@ except ImportError:
 
 import torch
 import numpy as np
-from typing import Union, List, Tuple, OrderedDict
+from typing import Union, List, OrderedDict
 from neuro_pilot.utils.logger import logger
 from .base import BaseBackend
 

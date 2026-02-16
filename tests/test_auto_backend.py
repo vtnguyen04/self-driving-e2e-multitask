@@ -1,8 +1,7 @@
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch, PropertyMock
 import torch.nn as nn
-from pathlib import Path
 from neuro_pilot.engine.backend.factory import AutoBackend
 from neuro_pilot.engine.backend.pytorch import PyTorchBackend
 # from neuro_pilot.engine.backend.tensorrt import TensorRTBackend
@@ -34,7 +33,7 @@ class TestBackend(unittest.TestCase):
 
         # Need to mock ONNXBackend instantiation to avoid real onnxruntime init
         with patch('neuro_pilot.engine.backend.factory.ONNXBackend') as MockONNX:
-            backend = AutoBackend("model.onnx", device='cpu')
+            AutoBackend("model.onnx", device='cpu')
             MockONNX.assert_called()
 
 if __name__ == '__main__':

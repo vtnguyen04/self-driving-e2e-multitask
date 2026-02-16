@@ -1,6 +1,5 @@
 import torch
 from neuro_pilot.nn.tasks import DetectionModel
-import numpy as np
 from loguru import logger
 import sys
 

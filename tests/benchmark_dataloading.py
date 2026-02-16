@@ -1,8 +1,6 @@
 import time
-import torch
 from neuro_pilot.data import create_dataloaders
-from neuro_pilot.cfg.schema import AugmentConfig, DataConfig
-from pydantic import BaseModel
+from neuro_pilot.cfg.schema import AugmentConfig
 
 class MockConfig:
     class Data:

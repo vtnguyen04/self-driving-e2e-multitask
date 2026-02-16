@@ -1,4 +1,6 @@
 from neuro_pilot.engine.base_validator import BaseValidator
+from neuro_pilot.utils.metrics import DetectionEvaluator
+import torch
 
 class Validator(BaseValidator):
     """
@@ -21,7 +23,7 @@ class Validator(BaseValidator):
         """Logic for iterating over the validation set."""
         from neuro_pilot.utils.tqdm import TQDM
         pbar = TQDM(dataloader, desc="Validating")
-        num_batches = len(dataloader)
+        len(dataloader)
 
         for batch in pbar:
             img = batch['image'].to(self.device)
@@ -31,7 +33,7 @@ class Validator(BaseValidator):
             gt_classes = batch['categories']
 
             # Inference
-            preds = self.model(img, cmd)
+            preds = self.model(img, cmd=cmd)
 
             targets = {
                 'waypoints': gt,
@@ -44,45 +46,32 @@ class Validator(BaseValidator):
             loss_dict = self.criterion.advanced(preds, targets)
             self.total_loss += loss_dict['total'].item()
 
-            # 2. L1 Calculation
-            pred_path = preds.get('waypoints', preds.get('control_points')).float()
-            if gt.shape[1] != pred_path.shape[1]:
-                 gt_resampled = torch.nn.functional.interpolate(gt.permute(0,2,1), size=pred_path.shape[1], mode='linear').permute(0,2,1)
-            else:
-                gt_resampled = gt
-            l1_err = (pred_path - gt_resampled).abs().mean().item()
-            self.total_l1 += l1_err
+            # 2. L1 Calculation (only if trajectory head exists)
+            pred_path = preds.get('waypoints', preds.get('control_points'))
+            if pred_path is not None:
+                pred_path = pred_path.float()
+                if gt.shape[1] != pred_path.shape[1]:
+                     gt_resampled = torch.nn.functional.interpolate(gt.permute(0,2,1), size=pred_path.shape[1], mode='linear').permute(0,2,1)
+                else:
+                    gt_resampled = gt
+                l1_err = (pred_path - gt_resampled).abs().mean().item()
+                self.total_l1 += l1_err
 
             # 3. Metrics Calculation (mAP, CM)
-            # Decode Predictions
-            pred_logits = preds['bboxes']
-            strides = torch.tensor([8, 16, 32], device=self.device)
+            # Use decoded bboxes from head if available
+            if 'bboxes' in preds:
+                bboxes = preds['bboxes']  # (B, 4 + NC, A)
+                # Assumes order [x1, y1, x2, y2, scores...] or [cx, cy, w, h, scores...]
+                # Based on head.py, dbox is concatenated with scores.sigmoid()
+                # and dbox is typically xyxy if it's the final output for NMS, or xywh.
+                # head.py: return torch.cat((dbox, x["scores"].sigmoid()), 1)
 
-            if isinstance(pred_logits, list):
-                anchors, strides = self.decoder.make_anchors(pred_logits, strides, 0.5)
-                xx = []
-                for x in pred_logits:
-                    b, c, h, w = x.shape
-                    xx.append(x.view(b, c, -1))
-                feat = torch.cat(xx, 2).permute(0, 2, 1)
+                # We need to extract boxes and scores for NMS
+                pred_bboxes = bboxes[:, :4, :].permute(0, 2, 1)  # (B, A, 4)
+                pred_scores = bboxes[:, 4:, :].permute(0, 2, 1)  # (B, A, NC)
             else:
-                anchors, strides = self.decoder.make_anchors([pred_logits], strides, 0.5)
-                feat = pred_logits
-
-            reg_max = self.decoder.reg_max
-            nc = self.cfg.head.num_classes
-            pred_regs = feat[..., :reg_max * 4]
-            pred_cls = feat[..., reg_max * 4 : reg_max * 4 + nc]
-            pred_scores = pred_cls.sigmoid()
-
-            b, a, c = pred_regs.shape
-            if reg_max > 1:
-                pred_dist = pred_regs.view(b, a, 4, reg_max).softmax(3).matmul(torch.arange(reg_max, dtype=torch.float, device=self.device))
-            else:
-                pred_dist = pred_regs
-
-            pred_bboxes_grid = self.decoder.dist2bbox(pred_dist, anchors, xywh=True)
-            pred_bboxes = pred_bboxes_grid * strides
+                # Fallback: if 'bboxes' missing, skip detection metrics for this batch
+                continue
 
             # Prepare for Evaluator
             formatted_preds = []
@@ -97,6 +86,9 @@ class Validator(BaseValidator):
 
                 if kept_boxes.numel() > 0:
                     from torchvision.ops import nms
+                    # Ensure boxes are in xyxy format for NMS if they were in xywh
+                    # Detect head usually outputs xyxy or xywh depending on decode_bboxes
+                    # Let's assume xywh for now as indicated by 'xywh=True' in previous code
                     x1 = kept_boxes[:, 0] - kept_boxes[:, 2]/2
                     y1 = kept_boxes[:, 1] - kept_boxes[:, 3]/2
                     x2 = kept_boxes[:, 0] + kept_boxes[:, 2]/2

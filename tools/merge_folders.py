@@ -1,6 +1,5 @@
 import shutil
 from pathlib import Path
-import os
 
 def merge_folders(base_dir: Path, target_dir_name: str = "merged_frames"):
     """

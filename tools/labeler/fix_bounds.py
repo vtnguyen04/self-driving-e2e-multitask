@@ -1,7 +1,5 @@
 import sys
-from pathlib import Path
 import json
-import sqlite3
 import numpy as np
 
 # Add e2e to path
@@ -73,7 +71,7 @@ def fix_bounds():
     conn.commit()
     conn.close()
 
-    print(f"\nFix Complete.")
+    print("\nFix Complete.")
     print(f"Samples Corrected: {fixed_count}")
 
 if __name__ == "__main__":

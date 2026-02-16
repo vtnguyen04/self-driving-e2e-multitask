@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Union, Optional, List
-from .ops import xyxy2xywh, xywh2xyxy, xyxy2ltwh, ltwh2xyxy, resample_segments
+from typing import Optional
+from .ops import xyxy2xywh, xywh2xyxy, xyxy2ltwh, ltwh2xyxy
 
 class Bboxes:
     """

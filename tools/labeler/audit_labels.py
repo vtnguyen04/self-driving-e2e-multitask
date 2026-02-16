@@ -1,7 +1,5 @@
 import sys
-from pathlib import Path
 import json
-import sqlite3
 import numpy as np
 
 # Add e2e to path
@@ -17,7 +15,6 @@ def audit():
 
     total_labeled = len(rows)
     out_of_bounds_count = 0
-    total_points = 0
     bad_points = 0
 
     print(f"Auditing {total_labeled} labeled samples...")
@@ -30,7 +27,6 @@ def audit():
             print(f"[{name}] Corruption: Cannot parse JSON")
             continue
 
-        raw_points = []
         if 'waypoints' in data and data['waypoints']:
             # Saved as Normalized [0..1] usually?
             # Wait, `index.html` `save()` logic:
@@ -70,7 +66,7 @@ def audit():
                  out_of_bounds_count += 1
                  # print(f"[{name}] BBox Out of bounds")
 
-    print(f"\nAudit Result:")
+    print("\nAudit Result:")
     print(f"Total Labeled: {total_labeled}")
     print(f"Samples with Out-Of-Bounds Data: {out_of_bounds_count}")
 

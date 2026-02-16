@@ -14,7 +14,6 @@ sys.modules["torchvision.ops"] = MagicMock()
 
 import unittest
 import torch
-import torch.nn as nn
 from neuro_pilot.nn.modules.backbone import NeuroPilotBackbone, TimmBackbone
 
 class TestBackbone(unittest.TestCase):

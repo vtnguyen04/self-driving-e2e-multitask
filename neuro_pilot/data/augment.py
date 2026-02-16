@@ -1,13 +1,9 @@
 import random
-import math
 import cv2
 import numpy as np
-import torch
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Dict, Any
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from neuro_pilot.utils.instance import Instances
-from neuro_pilot.utils.ops import xywh2xyxy, xyxy2xywh
 
 class BaseTransform:
     """Base class for all NeuroPilot transformations."""
@@ -202,15 +198,15 @@ class StandardAugmentor(BaseTransform):
             # Create a dummy object with default values if schema not available or simple init
             class DummyConfig:
                 enabled = True
-                rotate_deg = 20.0
+                rotate_deg = 5.0  # Reduced rotation
                 translate = 0.1
-                scale = 0.1
-                perspective = 0.05
+                scale = 0.5
+                perspective = 0.0
                 hsv_h = 0.015
                 hsv_s = 0.7
                 hsv_v = 0.4
                 color_jitter = 0.3
-                noise_prob = 0.1
+                noise_prob = 0.4  # Increased noise
                 blur_prob = 0.1
             cfg = DummyConfig()
         else:
@@ -218,10 +214,10 @@ class StandardAugmentor(BaseTransform):
 
         if training:
             # Use Config values
-            deg = cfg.rotate_deg
-            trans = cfg.translate
-            scale = cfg.scale
-            persp = cfg.perspective
+            deg = getattr(cfg, 'rotate_deg', 5.0)
+            trans = getattr(cfg, 'translate', 0.1)
+            scale = getattr(cfg, 'scale', 0.5)
+            persp = getattr(cfg, 'perspective', 0.0)
 
             self.transform = A.Compose([
                 A.Affine(
@@ -230,20 +226,20 @@ class StandardAugmentor(BaseTransform):
                     rotate=(-deg, deg),
                     p=0.5
                 ),
-                A.Perspective(scale=(0.0, persp), p=0.3), # 0 to max perspective
+                A.Perspective(scale=(0.0, persp), p=0.3) if persp > 0 else A.NoOp(), # 0 to max perspective
                 A.HueSaturationValue(
-                    hue_shift_limit=int(cfg.hsv_h * 180),
-                    sat_shift_limit=int(cfg.hsv_s * 255),
-                    val_shift_limit=int(cfg.hsv_v * 255),
+                    hue_shift_limit=int(getattr(cfg, 'hsv_h', 0.015) * 180),
+                    sat_shift_limit=int(getattr(cfg, 'hsv_s', 0.7) * 255),
+                    val_shift_limit=int(getattr(cfg, 'hsv_v', 0.4) * 255),
                     p=0.5
                 ),
                 A.RandomBrightnessContrast(
-                    brightness_limit=cfg.color_jitter,
-                    contrast_limit=cfg.color_jitter,
+                    brightness_limit=getattr(cfg, 'color_jitter', 0.3),
+                    contrast_limit=getattr(cfg, 'color_jitter', 0.3),
                     p=0.5
                 ),
-                A.OneOf([A.GaussNoise(p=1.0), A.ISONoise(p=1.0)], p=cfg.noise_prob),
-                A.OneOf([A.MotionBlur(blur_limit=5, p=1.0), A.GaussianBlur(blur_limit=(3, 5), p=1.0)], p=cfg.blur_prob),
+                A.OneOf([A.GaussNoise(p=1.0), A.ISONoise(p=1.0)], p=getattr(cfg, 'noise_prob', 0.4)),
+                A.OneOf([A.MotionBlur(blur_limit=5, p=1.0), A.GaussianBlur(blur_limit=(3, 5), p=1.0)], p=getattr(cfg, 'blur_prob', 0.1)),
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2()
             ], bbox_params=A.BboxParams(format='coco', label_fields=['category_ids']),

@@ -7,7 +7,6 @@ sys.modules["torchvision.ops"] = MagicMock()
 sys.modules["timm"] = MagicMock()
 sys.modules["timm.utils"] = MagicMock()
 
-import torch
 import torch.nn as nn
 from neuro_pilot.engine.task import TaskRegistry
 from neuro_pilot.cfg.schema import AppConfig
@@ -15,8 +14,6 @@ from neuro_pilot.engine.base_trainer import BaseTrainer
 from neuro_pilot.engine.base_validator import BaseValidator
 
 # Import all tasks to ensure registration
-import neuro_pilot.tasks
-import neuro_pilot.engine.task # for multitask
 
 def test_registry_and_build():
     print("\n--- NeuroPilot Architecture Verification ---")
@@ -46,7 +43,7 @@ def test_registry_and_build():
             print(f"  [PASS] Model Built: {type(model).__name__}")
 
             task_inst.build_criterion()
-            print(f"  [PASS] Criterion Built")
+            print("  [PASS] Criterion Built")
 
             trainer = task_inst.get_trainer()
             if trainer:
@@ -54,14 +51,14 @@ def test_registry_and_build():
                  # For multitask, it should be a Trainer (inherits BaseTrainer)
                  if name == "multitask":
                      assert isinstance(trainer, BaseTrainer), f"Trainer for {name} must inherit BaseTrainer"
-                     print(f"  [PASS] Trainer conforms to BaseTrainer")
+                     print("  [PASS] Trainer conforms to BaseTrainer")
 
             validator = task_inst.get_validator()
             if validator:
                  print(f"  [INFO] Validator: {type(validator).__name__}")
                  if name == "multitask":
                      assert isinstance(validator, BaseValidator), f"Validator for {name} must inherit BaseValidator"
-                     print(f"  [PASS] Validator conforms to BaseValidator")
+                     print("  [PASS] Validator conforms to BaseValidator")
 
             results[name] = "OK"
         except Exception as e:

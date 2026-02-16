@@ -8,14 +8,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from neuro_pilot.utils.ops import dist2bbox, make_anchors
-from neuro_pilot.utils.torch_utils import fuse_conv_and_bn
 
 from .block import DFL, Proto, C3k2
 from .conv import Conv, DWConv
-from .attention import AttentionGate, VLFusion
+from .attention import AttentionGate
 from .base import BaseHead
 
-__all__ = ["Detect", "v10Detect", "HeatmapHead", "TrajectoryHead", "BaseHead"]
+__all__ = ["Detect", "v10Detect", "HeatmapHead", "TrajectoryHead", "BaseHead", "Segment"]
 
 class Detect(BaseHead):
     """YOLO Detect head for object detection models."""
@@ -190,7 +189,7 @@ class TrajectoryHead(BaseHead):
     Inputs: [p5, heatmap_logits] + command (via kwargs or secondary input)
     """
     forward_with_kwargs = True
-    def __init__(self, ch_in, num_commands=4, num_waypoints=10, hidden_dim=128):
+    def __init__(self, ch_in, num_commands=4, num_waypoints=10, hidden_dim=256):
         super().__init__()
         if isinstance(ch_in, list):
             self.c5_dim = ch_in[0]
@@ -200,16 +199,18 @@ class TrajectoryHead(BaseHead):
         self.num_commands = num_commands
         self.num_waypoints = num_waypoints
 
-        self.cmd_embed = nn.Embedding(num_commands, 32)
+        self.cmd_embed = nn.Embedding(num_commands, 64)
+        
+        # Spatial pooling to preserve some location info without massive flatten
+        self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4)) 
+        flatten_dim = self.c5_dim * 4 * 4
 
         self.traj_head = nn.Sequential(
-            nn.Linear(self.c5_dim + 32, 512),
-            nn.LayerNorm(512),
-            nn.GELU(),
-            nn.Linear(512, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Linear(256, 4 * 2)
+            nn.Linear(flatten_dim + 64, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 4 * 2) # 4 control points (x, y)
         )
 
         t = torch.linspace(0, 1, num_waypoints)
@@ -245,29 +246,90 @@ class TrajectoryHead(BaseHead):
                 heatmap = heatmap.get('heatmap')
 
             if heatmap is not None:
+                # Resize heatmap to match p5 spatial dims if necessary
                 if heatmap.shape[2:] != p5.shape[2:]:
-                    mask = F.adaptive_avg_pool2d(torch.sigmoid(heatmap), (p5.shape[2], p5.shape[3]))
+                    mask = F.interpolate(torch.sigmoid(heatmap), size=p5.shape[2:], mode='bilinear', align_corners=False)
                 else:
                     mask = torch.sigmoid(heatmap)
-
-                pooled = F.adaptive_avg_pool2d(p5 * mask, 1).flatten(1)
+                
+                # Element-wise gate
+                feat = p5 * mask
             else:
-                pooled = F.adaptive_avg_pool2d(p5, 1).flatten(1)
+                feat = p5
         else:
-            pooled = F.adaptive_avg_pool2d(p5, 1).flatten(1)
+            feat = p5
+
+        # Flatten features preserving spatial awareness
+        pooled = self.spatial_pool(feat).flatten(1)
 
         # Concatenate Command Embedding
         cmd_emb = self.cmd_embed(cmd_idx)
         combined = torch.cat([pooled, cmd_emb], dim=1)
 
-        # Predict Control Points
-        control_points = torch.tanh(self.traj_head(combined).view(-1, 4, 2)) * 1.5
+        # Predict Control Points (centered around 0, range [-1.5, 1.5])
+        # We add a small bias to ensure it doesn't start at pure zero
+        control_points = self.traj_head(combined).view(-1, 4, 2)
+        control_points = torch.tanh(control_points) * 1.5
 
         # Bezier Interpolation
         waypoints = torch.einsum('bkd,nk->bnd', control_points, self.bernstein_m)
 
+        # Safety: handle NaNs if they somehow appear (e.g. exploding gradients before clipping)
+        if torch.isnan(waypoints).any():
+             waypoints = torch.nan_to_num(waypoints, nan=0.0)
+             control_points = torch.nan_to_num(control_points, nan=0.0)
+
         res = {'waypoints': waypoints, 'control_points': control_points}
         return {'trajectory': res, **res}
+
+class Segment(Detect):
+    """YOLO Segment head for segmentation models."""
+
+    def __init__(self, ch: tuple = (), nc: int = 80, nm: int = 32, npr: int = 256, reg_max=16, end2end=False):
+        """Initialize segmentation head with masks and prototypes."""
+        super().__init__(ch, nc, reg_max, end2end)
+        self.nm = nm  # number of masks
+        self.npr = npr  # number of protos
+        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
+        c4 = max(ch[0] // 4, self.nm)
+        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
+        if end2end:
+            self.one2one_cv4 = copy.deepcopy(self.cv4)
+
+    @property
+    def one2many(self):
+        """Returns the one-to-many head components."""
+        return dict(box_head=self.cv2, cls_head=self.cv3, mask_head=self.cv4)
+
+    @property
+    def one2one(self):
+        """Returns the one-to-one head components (if end2end)."""
+        return dict(box_head=self.one2one_cv2, cls_head=self.one2one_cv3, mask_head=self.one2one_cv4)
+
+    def forward_head(self, x: list[torch.Tensor], box_head: torch.nn.Module = None, cls_head: torch.nn.Module = None, mask_head: torch.nn.Module = None) -> dict[str, torch.Tensor]:
+        """Concatenates predictions including mask coefficients."""
+        preds = super().forward_head(x, box_head, cls_head)
+        if mask_head is not None:
+            bs = x[0].shape[0]
+            preds["mask_coefficient"] = torch.cat([mask_head[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)
+        return preds
+
+    def forward(self, x: list[torch.Tensor]):
+        """Forward pass for instance segmentation."""
+        proto = self.proto(x[0])
+        preds = super().forward(x)
+
+        # Inject proto into standardized output
+        if self.end2end:
+            preds["one2many"]["proto"] = proto
+            preds["one2one"]["proto"] = proto.detach()
+            preds["detect"]["one2many"]["proto"] = proto
+            preds["detect"]["one2one"]["proto"] = proto.detach()
+        else:
+            preds["proto"] = proto
+            preds["detect"]["proto"] = proto
+
+        return preds
 
 class ClassificationHead(nn.Module):
     """

@@ -1,7 +1,6 @@
 
 import unittest
 import torch
-import numpy as np
 from neuro_pilot.utils.metrics import DetectionMetric, ConfusionMatrix, box_iou, bbox_ioa
 
 class MockConfig:

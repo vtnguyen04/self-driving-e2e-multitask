@@ -3,7 +3,6 @@ import time
 import torch
 import torch.nn as nn
 import numpy as np
-from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from neuro_pilot.engine.backend.factory import AutoBackend

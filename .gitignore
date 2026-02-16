@@ -5,3 +5,5 @@ experiments/
 .venv/
 .env
 .DS_Store
+ultralytics/
+*.log

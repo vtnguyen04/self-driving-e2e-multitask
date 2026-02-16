@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 import torch
 import os
-import albumentations as A
 from neuro_pilot.data.augment import StandardAugmentor
 
 def test_force_augmentation_db():

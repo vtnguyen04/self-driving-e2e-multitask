@@ -1,7 +1,6 @@
-import pytest
 import torch
 import numpy as np
-from neuro_pilot.data.neuro_pilot_dataset_v2 import create_dummy_dataloader, Sample
+from neuro_pilot.data.neuro_pilot_dataset_v2 import create_dummy_dataloader
 from neuro_pilot.data.augment import StandardAugmentor
 from neuro_pilot.cfg.schema import AppConfig
 

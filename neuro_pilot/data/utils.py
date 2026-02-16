@@ -2,9 +2,6 @@ import os
 import glob
 from pathlib import Path
 import yaml
-import numpy as np
-from tqdm import tqdm
-from PIL import Image, ExifTags
 
 # Ultralytics-style extensions
 IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes

@@ -1,6 +1,5 @@
 
 import sys
-from pathlib import Path
 
 # Add e2e to path
 sys.path.append("/home/quynhthu/Documents/AI-project/e2e")

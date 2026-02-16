@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-from typing import Union, List, Tuple
+from typing import Union, List
 from neuro_pilot.utils.logger import logger
 from .base import BaseBackend
-from neuro_pilot.utils.torch_utils import load_checkpoint
 
 class PyTorchBackend(BaseBackend):
     """

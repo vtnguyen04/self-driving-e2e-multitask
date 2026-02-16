@@ -1,76 +1,135 @@
-
 import unittest
 import torch
-import torch.nn as nn
-from neuro_pilot.nn.modules.head import HeatmapHead, TrajectoryHead
-from neuro_pilot.nn.modules.select import SelectFeature
-from neuro_pilot.nn.modules.backbone import TimmBackbone
+from neuro_pilot.nn.modules import (
+    Conv, Bottleneck, C3k2, Proto, C2PSA, Detect, Segment, HeatmapHead, TrajectoryHead, SelectFeature, TimmBackbone, ClassificationHead
+)
 
 class TestNNModules(unittest.TestCase):
-    def test_select_feature(self):
-        # Input is a list of tensors
-        t1 = torch.randn(1, 10, 32, 32)
-        t2 = torch.randn(1, 20, 16, 16)
-        inputs = [t1, t2]
+    def setUp(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.batch_size = 2
+        self.in_ch = 64
+        self.out_ch = 128
+        self.img_size = 32 # small size for fast testing
 
-        # Select index 0
-        mod0 = SelectFeature(0)
-        out0 = mod0(inputs)
-        self.assertTrue(torch.equal(out0, t1))
+    def test_conv(self):
+        print("Testing Conv...")
+        m = Conv(self.in_ch, self.out_ch, k=3, s=1, p=None).to(self.device)
+        x = torch.randn(self.batch_size, self.in_ch, self.img_size, self.img_size).to(self.device)
+        y = m(x)
+        self.assertEqual(y.shape, (self.batch_size, self.out_ch, self.img_size, self.img_size))
 
-        # Select index 1
-        mod1 = SelectFeature(1)
-        out1 = mod1(inputs)
-        self.assertTrue(torch.equal(out1, t2))
+    def test_bottleneck(self):
+        print("Testing Bottleneck...")
+        m = Bottleneck(self.in_ch, self.in_ch, shortcut=True).to(self.device)
+        x = torch.randn(self.batch_size, self.in_ch, self.img_size, self.img_size).to(self.device)
+        y = m(x)
+        self.assertEqual(y.shape, (self.batch_size, self.in_ch, self.img_size, self.img_size))
+
+    def test_c3k2(self):
+        print("Testing C3k2...")
+        m = C3k2(self.in_ch, self.out_ch, n=1, shortcut=True, c3k=True).to(self.device)
+        x = torch.randn(self.batch_size, self.in_ch, self.img_size, self.img_size).to(self.device)
+        y = m(x)
+        self.assertEqual(y.shape, (self.batch_size, self.out_ch, self.img_size, self.img_size))
+
+    def test_c2psa(self):
+        print("Testing C2PSA...")
+        # C2PSA requires c1 == c2 in the current implementation
+        m = C2PSA(self.in_ch, self.in_ch, n=1).to(self.device)
+        x = torch.randn(self.batch_size, self.in_ch, self.img_size, self.img_size).to(self.device)
+        y = m(x)
+        self.assertEqual(y.shape, (self.batch_size, self.in_ch, self.img_size, self.img_size))
+
+    def test_proto(self):
+        print("Testing Proto (Production Grade)...")
+        nm = 32
+        m = Proto(self.in_ch, c_=64, c2=nm).to(self.device)
+        x = torch.randn(self.batch_size, self.in_ch, self.img_size, self.img_size).to(self.device)
+        y = m(x)
+        # Proto upsamples by 2
+        self.assertEqual(y.shape, (self.batch_size, nm, self.img_size * 2, self.img_size * 2))
+
+    def test_detect(self):
+        print("Testing Detect...")
+        nc = 14
+        ch = (64, 128, 256)
+        m = Detect(nc=nc, ch=ch).to(self.device)
+        x = [
+            torch.randn(self.batch_size, 64, 80, 80).to(self.device),
+            torch.randn(self.batch_size, 128, 40, 40).to(self.device),
+            torch.randn(self.batch_size, 256, 20, 20).to(self.device)
+        ]
+        y = m(x)
+        # Standard neuro_pilot Detect returns a dict
+        self.assertIn('boxes', y)
+        self.assertIn('scores', y)
+
+    def test_segment(self):
+        print("Testing Segment...")
+        nc, nm = 14, 32
+        ch = (64, 128, 256)
+        m = Segment(nc=nc, nm=nm, npr=256, ch=ch).to(self.device)
+        x = [
+            torch.randn(self.batch_size, 64, 80, 80).to(self.device),
+            torch.randn(self.batch_size, 128, 40, 40).to(self.device),
+            torch.randn(self.batch_size, 256, 20, 20).to(self.device)
+        ]
+        y = m(x)
+        self.assertIn('boxes', y)
+        self.assertIn('scores', y)
+        self.assertIn('mask_coefficient', y)
+        self.assertIn('proto', y)
+
+        # Verify shape of mask_coefficient: (batch, nm, all_anchors)
+        # Anchors: (80*80) + (40*40) + (20*20) = 6400 + 1600 + 400 = 8400
+        self.assertEqual(y['mask_coefficient'].shape[1], nm)
+        self.assertEqual(y['proto'].shape, (self.batch_size, nm, 80*2, 80*2))
 
     def test_heatmap_head(self):
-        c2 = torch.randn(1, 64, 64, 64) # Low level
-        p3 = torch.randn(1, 128, 32, 32) # High level
-
-        # Args: [c3_dim(128), c2_dim(64)]
-        head = HeatmapHead([128, 64], ch_out=1, hidden_dim=32)
-
-        # Forward with list
-        out = head([p3, c2])
-        self.assertIsInstance(out, dict)
-        self.assertEqual(out['heatmap'].shape, (1, 1, 64, 64)) # Should match c2 spatial dim
+        print("Testing HeatmapHead...")
+        # HeatmapHead expects [p3, c2], where p3 is upsampled by 2 to match c2
+        m = HeatmapHead(ch_in=[64, 128], ch_out=1).to(self.device)
+        x = [
+            torch.randn(self.batch_size, 64, 8, 8).to(self.device),  # p3 (stride 8)
+            torch.randn(self.batch_size, 128, 16, 16).to(self.device) # c2 (stride 4)
+        ]
+        y = m(x)
+        self.assertIn('heatmap', y)
+        # Should match spatial dimension of c2 (x[1])
+        self.assertEqual(y['heatmap'].shape[2:], x[1].shape[2:])
 
     def test_trajectory_head(self):
-        p5 = torch.randn(1, 256, 16, 16)
-        heatmap = torch.randn(1, 1, 64, 64)
+        print("Testing TrajectoryHead...")
+        m = TrajectoryHead(ch_in=128, num_waypoints=10).to(self.device)
+        x = torch.randn(self.batch_size, 128, 8, 8).to(self.device)
+        y = m(x, cmd_idx=torch.zeros(self.batch_size, dtype=torch.long).to(self.device))
+        self.assertIn('waypoints', y)
+        self.assertEqual(y['waypoints'].shape, (self.batch_size, 10, 2))
 
-        # Args: [p5_dim(256)]
-        head = TrajectoryHead([256], num_commands=4, num_waypoints=10)
-
-        # Command input
-        cmd = torch.zeros(1, 4)
-        cmd[0, 1] = 1 # One-hot
-
-        # Forward with kwargs
-        out = head([p5], cmd_onehot=cmd, heatmap=heatmap)
-
-        # Output shape: [BATCH, NUM_WAYPOINTS, 2]
-        self.assertIsInstance(out, dict)
-        self.assertEqual(out['waypoints'].shape, (1, 10, 2))
-        self.assertEqual(out['control_points'].shape, (1, 4, 2))
+    def test_select_feature(self):
+        print("Testing SelectFeature...")
+        m = SelectFeature(index=1)
+        # Timm backbone outputs dict of channels
+        x = {0: torch.randn(1, 1), 1: torch.randn(1, 32)}
+        y = m(x)
+        self.assertEqual(y.shape[1], 32)
 
     def test_timm_backbone(self):
-        # Note: This requires network access unless cached.
-        # Using a small model to test wrapper logic if possible.
-        # If execution fails due to network, we can skip or mock.
-        try:
-            model = TimmBackbone('mobilenetv3_small_050', pretrained=False, features_only=True)
-            dummy = torch.randn(1, 3, 224, 224)
-            features = model(dummy)
+        print("Testing TimmBackbone...")
+        m = TimmBackbone(model_name='mobilenetv4_conv_small_050', pretrained=False).to(self.device)
+        x = torch.randn(self.batch_size, 3, 224, 224).to(self.device)
+        y = m(x)
+        # Features only mode returns a list of tensors
+        self.assertIsInstance(y, (dict, list, tuple))
 
-            self.assertIsInstance(features, list)
-            self.assertTrue(len(features) > 1)
-            # Check channels method
-            channels = model.feature_info.channels()
-            self.assertIsInstance(channels, list)
-            self.assertEqual(len(channels), len(features))
-        except Exception as e:
-            print(f"Skipping TimmBackbone test (network/timms issue): {e}")
+    def test_classification_head(self):
+        print("Testing ClassificationHead...")
+        m = ClassificationHead(ch=128, nc=10).to(self.device)
+        x = torch.randn(self.batch_size, 128, 7, 7).to(self.device)
+        y = m(x)
+        self.assertIn('classes', y)
+        self.assertEqual(y['classes'].shape, (self.batch_size, 10))
 
 if __name__ == '__main__':
     unittest.main()

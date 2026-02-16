@@ -12,13 +12,13 @@ loss:
 
 trainer:
   max_epochs: 300
-  learning_rate: 0.01       # initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
+  learning_rate: 0.001       # initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
   lr_final: 0.01            # final learning rate (lr0 * lrf)
   momentum: 0.937           # SGD momentum/Adam beta1
   weight_decay: 0.0005      # optimizer weight decay 5e-4
   warmup_epochs: 3.0        # warmup epochs (fractions ok)
   warmup_momentum: 0.8      # warmup initial momentum
-  warmup_bias_lr: 0.1       # warmup initial bias lr
+  warmup_bias_lr: 0.01       # Reduced from 0.1 to avoid explosion with AdamW
   lr_schedule: "cosine"     # learning rate schedule
   use_amp: True
   use_ema: True

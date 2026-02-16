@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from neuro_pilot.utils.tqdm import TQDM
@@ -139,7 +140,8 @@ class Trainer(BaseTrainer):
                     'waypoints': gt_waypoints,
                     'bboxes': batch['bboxes'],
                     'categories': batch['categories'],
-                    'curvature': batch.get('curvature', None)
+                    'curvature': batch.get('curvature', None),
+                    'command_idx': batch['command_idx'].to(self.device)
                 }
 
                 # Expose for Callbacks

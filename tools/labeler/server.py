@@ -1,11 +1,11 @@
 import uvicorn
+import sqlite3
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
 import json
-import glob
 import os
 
 from fastapi.responses import FileResponse
@@ -93,55 +93,6 @@ async def get_image(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(file_path)
-
-@app.post("/api/duplicate/{filename}")
-async def duplicate_sample(filename: str):
-    """Duplicate a sample in DB (same image, new entry)."""
-    conn = get_db_connection()
-    c = conn.cursor()
-
-    # 1. Get original info
-    c.execute("SELECT image_path FROM samples WHERE image_name = ?", (filename,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Original image not found")
-
-    original_path = row['image_path']
-    base_name = Path(filename).stem
-    suffix = Path(filename).suffix
-
-    # 2. Find next available name
-    # Simplistic: <name>_dup<N><suffix>
-    import re
-    # Check if already a duplicate
-    match = re.search(r'_dup(\d+)$', base_name)
-    if match:
-        base_name = base_name[:match.start()] # strip existing dup suffix
-
-    # Count existing duplicates
-    c.execute("SELECT image_name FROM samples WHERE image_name LIKE ?", (f"{base_name}_dup%",))
-    existing_dups = [r['image_name'] for r in c.fetchall()]
-
-    cnt = 1
-    while True:
-        new_name = f"{base_name}_dup{cnt}{suffix}"
-        if new_name not in existing_dups and new_name != filename: # logic check
-             # Also check uniqueness in DB constraint just in case
-             try:
-                 c.execute(
-                    "INSERT INTO samples (image_name, image_path, is_labeled, data) VALUES (?, ?, 0, NULL)",
-                    (new_name, original_path)
-                 )
-                 conn.commit()
-                 conn.close()
-                 return {"status": "success", "new_name": new_name}
-             except sqlite3.IntegrityError:
-                 pass # Name collision, try next
-        cnt += 1
-
-    conn.close()
-    raise HTTPException(status_code=500, detail="Failed to generate duplicate name")
 
 @app.post("/api/duplicate/{filename}")
 async def duplicate_sample(filename: str):

@@ -21,7 +21,7 @@ class TestTAL(unittest.TestCase):
         pd_scores = torch.rand(bs, n_anchors, n_classes) # sigmoid outputs
         pd_bboxes = torch.rand(bs, n_anchors, 4) * 10 # xyxy format
         anc_points = torch.rand(n_anchors, 2) * 10
-        stride_tensor = torch.ones(n_anchors, 1)
+        torch.ones(n_anchors, 1)
 
         # Ground Truth
         # 2 GT per image, class 0, box [2,2,4,4] and [5,5,7,7]

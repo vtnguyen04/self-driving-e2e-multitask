@@ -1,6 +1,5 @@
 import unittest
 import torch
-import torch.nn as nn
 from unittest.mock import MagicMock
 from neuro_pilot.utils.losses import CombinedLoss
 

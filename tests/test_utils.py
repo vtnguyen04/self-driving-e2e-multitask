@@ -1,7 +1,7 @@
 
 import unittest
 import torch
-from neuro_pilot.utils.losses import HeatmapWaypointLoss, CombinedLoss, BboxLoss
+from neuro_pilot.utils.losses import HeatmapWaypointLoss, CombinedLoss
 from neuro_pilot.nn.tasks import DetectionModel
 
 class MockConfig:
@@ -38,7 +38,7 @@ class TestUtils(unittest.TestCase):
             loss_fn = CombinedLoss(model.args, model, device='cpu')
 
             # Mock Preds
-            preds = {
+            {
                 'detect': None,
                 'heatmap': torch.randn(2, 1, 32, 32),
                 'waypoints': torch.randn(2, 10, 2),

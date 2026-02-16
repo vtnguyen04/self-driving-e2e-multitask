@@ -1,8 +1,6 @@
 import unittest
 import numpy as np
 import cv2
-import albumentations as A
-import torch
 from neuro_pilot.data.augment import StandardAugmentor
 from neuro_pilot.cfg.schema import AugmentConfig
 
@@ -37,7 +35,7 @@ class TestAugmentConfig(unittest.TestCase):
 
         # Run multiple times, should NEVER change
         for _ in range(5):
-            out = augmentor(labels.copy())
+            augmentor(labels.copy())
             # Check if image is identical
             # Augmentor converts to tensor and normalizes.
             # Compare logically: Check middle pixel is still white, side is black.
@@ -54,7 +52,7 @@ class TestAugmentConfig(unittest.TestCase):
         cfg_high_rot = AugmentConfig(
             rotate_deg=90.0
         )
-        aug_rot = StandardAugmentor(training=True, imgsz=224, config=cfg_high_rot)
+        StandardAugmentor(training=True, imgsz=224, config=cfg_high_rot)
 
         # Just ensure no crash and config is accepted
         self.assertTrue(True)

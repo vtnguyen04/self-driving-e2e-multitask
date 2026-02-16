@@ -105,6 +105,9 @@ class VLFusion(nn.Module):
         # 3. Gated Residual Connection
         x_flat = self.norm(x_flat + gate_score * attn_out)
 
+        if torch.isnan(x_flat).any():
+             x_flat = torch.nan_to_num(x_flat, nan=0.0)
+
         vision = x_flat.permute(0, 2, 1).reshape(B, C, H, W)
         return {"feats": vision, "gate_score": gate_score}
 
@@ -147,13 +150,15 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
     def forward(self, x, indices=None, **kwargs):
         """
         Args:
-            x (Tensor): Ignored (from previous layer)
+            x (Tensor): Command indices [B] or image features (ignored if indices provided)
             indices (Tensor): [B] batch of prompt indices (if from kwargs)
         Returns:
             Tensor: [B, 1, embed_dim]
         """
         if indices is None:
-            if 'cmd_onehot' in kwargs:
+            if isinstance(x, torch.Tensor) and x.dtype in {torch.long, torch.int}:
+                indices = x
+            elif 'cmd_onehot' in kwargs:
                 indices = kwargs['cmd_onehot'].argmax(dim=1)
             elif 'command_idx' in kwargs:
                 indices = kwargs['command_idx']

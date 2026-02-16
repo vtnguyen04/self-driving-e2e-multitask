@@ -1,5 +1,4 @@
 import unittest
-import torch
 import torch.nn as nn
 from pathlib import Path
 from neuro_pilot.engine.model import NeuroPilot

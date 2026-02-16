@@ -1,9 +1,7 @@
 
 import onnxruntime
 import torch
-import numpy as np
 from typing import Union, List
-from neuro_pilot.utils.logger import logger
 from .base import BaseBackend
 
 class ONNXBackend(BaseBackend):

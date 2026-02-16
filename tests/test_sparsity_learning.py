@@ -90,7 +90,7 @@ class TestSparsityLearning(unittest.TestCase):
         final_gate_curve = gate_c.mean().item()
         final_gate_inter = gate_i.mean().item()
 
-        print(f"\nFinal Results:")
+        print("\nFinal Results:")
         print(f"Gate on Curve: {final_gate_curve:.3f}")
         print(f"Gate on Intersection: {final_gate_inter:.3f}")
 

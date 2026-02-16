@@ -1,6 +1,5 @@
-import pytest
 import torch.nn as nn
-from neuro_pilot.core.registry import Registry, register_backbone, register_head, register_loss
+from neuro_pilot.core.registry import Registry, register_backbone, register_head
 
 def test_registry_decorators():
     # 1. Test Backbone Registration

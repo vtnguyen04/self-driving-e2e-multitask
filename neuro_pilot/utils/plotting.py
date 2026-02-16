@@ -260,8 +260,10 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
         if output is not None and 'waypoints' in output:
             wp_p = output['waypoints']
             if isinstance(wp_p, dict): wp_p = wp_p.get('waypoints', next(iter(wp_p.values())))
-            wp_p = (wp_p[i].detach().cpu().numpy() + 1) / 2 * [W-1, H-1]
-            ann_p.trajectory(wp_p, color=(255, 0, 255)); ann_p.waypoints(wp_p, color=(200, 0, 200))
+            wp_p = wp_p[i].detach().cpu().numpy()
+            if not np.isnan(wp_p).any():
+                wp_p = (wp_p + 1) / 2 * [W-1, H-1]
+                ann_p.trajectory(wp_p, color=(255, 0, 255)); ann_p.waypoints(wp_p, color=(200, 0, 200))
         ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, 0:W] = ann_p.result()
 

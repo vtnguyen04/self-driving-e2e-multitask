@@ -1,14 +1,12 @@
 from __future__ import annotations
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Any
 
-from neuro_pilot.utils.metrics import bbox_iou, probiou, OKS_SIGMA, RLE_WEIGHT
-from neuro_pilot.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
+from neuro_pilot.utils.logger import logger
+from neuro_pilot.utils.metrics import bbox_iou
+from neuro_pilot.utils.ops import xywh2xyxy
 from neuro_pilot.utils.tal import TaskAlignedAssigner, dist2bbox, make_anchors, bbox2dist
-from neuro_pilot.utils.torch_utils import logger
 
 class HeatmapWaypointLoss(nn.Module):
     """Refined Heatmap Loss for sharp, thin midline."""
@@ -123,6 +121,7 @@ class DetectionLoss:
             topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0, stride=self.stride.tolist()
         )
         self.bbox_loss = BboxLoss(self.reg_max).to(device)
+        self.focal_loss = FocalLoss(gamma=1.5, alpha=0.25)
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
@@ -163,13 +162,16 @@ class DetectionLoss:
         imgsz = torch.tensor(preds["feats"][0].shape[2:], device=self.device) * self.stride[0]
 
         # Convert simple list-targets to flat tensor for assigner
-        # targets: [batch_idx, cls, x, y, w, h] normalized
         targets_flat = []
         for i in range(batch_size):
             boxes = batch['bboxes'][i].to(self.device)
             cls = batch['categories'][i].to(self.device).view(-1, 1)
             b_idx = torch.full_like(cls, i)
             targets_flat.append(torch.cat([b_idx, cls, boxes], 1))
+        
+        if not targets_flat:
+             return loss * 0.0, loss.detach()
+             
         targets_flat = torch.cat(targets_flat, 0)
 
         targets = self.preprocess(targets_flat, batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
@@ -188,7 +190,9 @@ class DetectionLoss:
         )
 
         target_scores_sum = max(target_scores.sum(), 1)
-        loss[1] = self.bce(pred_scores, target_scores).sum() / target_scores_sum
+        
+        # Cls Loss (Focal)
+        loss[1] = self.focal_loss(pred_scores, target_scores) / target_scores_sum
 
         if fg_mask.any():
             loss[0], loss[2] = self.bbox_loss(
@@ -196,7 +200,7 @@ class DetectionLoss:
                 target_scores, target_scores_sum, fg_mask, imgsz, stride_tensor
             )
 
-        return loss * batch_size, loss.detach()
+        return loss, loss.detach()
 
 class CombinedLoss(nn.Module):
     def __init__(self, config, model, device='cuda'):
@@ -219,64 +223,81 @@ class CombinedLoss(nn.Module):
         self.ce_cls = nn.CrossEntropyLoss()
 
     def advanced(self, predictions: dict, targets: dict) -> dict:
-        pred_hm = predictions.get('heatmap')
-        if isinstance(pred_hm, dict):
-             pred_hm = pred_hm['heatmap']
-
         gt_wp = targets['waypoints']
-        B, _, H, W = pred_hm.shape
-        gt_hm = self.heatmap_loss.generate_heatmap(gt_wp, H, W)
+        B = gt_wp.shape[0]
 
         # 0. Heatmap Loss
-        l_heat_val = self.heatmap_loss(pred_hm, gt_hm)
-        l_heat = l_heat_val * self.lambda_heatmap
+        l_heat = torch.tensor(0.0).to(self.device)
+        l_heat_val = torch.tensor(0.0).to(self.device)
+        pred_hm = predictions.get('heatmap')
+        if pred_hm is not None:
+            if isinstance(pred_hm, dict):
+                 pred_hm = pred_hm['heatmap']
+            _, _, H, W = pred_hm.shape
+            gt_hm = self.heatmap_loss.generate_heatmap(gt_wp, H, W)
+            l_heat_val = self.heatmap_loss(pred_hm, gt_hm)
+            l_heat = l_heat_val * self.lambda_heatmap
 
         # 1. Detection Loss
-        # Pass the detection head output specifically
+        l_det = torch.tensor(0.0).to(self.device)
         det_head_out = predictions.get('detect')
-        if isinstance(det_head_out, tuple):
-             det_head_out = det_head_out[1] # Use the preds dict
-
-        # Fallback for standalone Detect or mis-indexed heads
         if det_head_out is None and 'boxes' in predictions:
              det_head_out = predictions
 
-        det_loss_val, det_loss_items = self.det_loss(det_head_out, targets)
-        # det_loss_val is [total_box, total_cls, total_dfl] for the batch
-        l_det = det_loss_val.sum() / B
+        if det_head_out is not None:
+            if isinstance(det_head_out, tuple):
+                 det_head_out = det_head_out[1] # Use the preds dict
+            det_loss_val, det_loss_items = self.det_loss(det_head_out, targets)
+            l_det = det_loss_val.sum() # Already normalized in DetectionLoss
 
         # 2. Trajectory Loss with "Martial Law" (Curvature Weighting)
-        pred_wp = predictions['waypoints']
-        raw_traj_loss = self.traj_loss(pred_wp, gt_wp).mean(dim=(1, 2))  # (B,)
+        l_traj = torch.tensor(0.0).to(self.device)
+        pred_wp = predictions.get('waypoints')
+        if pred_wp is not None:
+            raw_traj_loss = self.traj_loss(pred_wp, gt_wp).mean(dim=(1, 2))  # (B,)
 
-        # Calculate or get curvature
-        curvature = targets.get('curvature', None)
-        if curvature is None:
-            # Calculate from GT waypoints: (B, N, 2)
-            vecs = gt_wp[:, 1:] - gt_wp[:, :-1]
-            norms = torch.norm(vecs, dim=-1, keepdim=True)
-            unit_vecs = vecs / (norms + 1e-6)
-            dots = (unit_vecs[:, :-1] * unit_vecs[:, 1:]).sum(dim=-1)
-            dots = torch.clamp(dots, -1.0, 1.0)
-            curvature = torch.acos(dots).sum(dim=-1)  # (B,)
+            # Calculate or get curvature
+            curvature = targets.get('curvature', None)
+            if curvature is None:
+                # Calculate from GT waypoints: (B, N, 2)
+                vecs = gt_wp[:, 1:] - gt_wp[:, :-1]
+                norms = torch.norm(vecs, dim=-1, keepdim=True)
+                unit_vecs = vecs / (norms + 1e-6)
+                dots = (unit_vecs[:, :-1] * unit_vecs[:, 1:]).sum(dim=-1)
+                dots = torch.clamp(dots, -1.0, 1.0)
+                curvature = torch.acos(dots).sum(dim=-1)  # (B,)
 
-        # Martial Law: Weight 5.0 if curvature > 0.5 rad
-        traj_weights = torch.ones_like(raw_traj_loss)
-        traj_weights[curvature > 0.5] = 5.0
+            # Martial Law: Weight 5.0 if curvature > 0.5 rad
+            traj_weights = torch.ones_like(raw_traj_loss)
+            traj_weights[curvature > 0.5] = 5.0
 
-        # Command Awareness (Intersection/Turn robustness)
-        cmd_idx = targets.get('command_idx', None)
-        if cmd_idx is not None:
-             # Boost weight for LEFT (1) or RIGHT (2) turns
-             turn_mask = (cmd_idx == 1) | (cmd_idx == 2)
-             traj_weights[turn_mask] *= 2.0
+            # Command Awareness (Intersection/Turn robustness)
+            cmd_idx = targets.get('command_idx')
+            if cmd_idx is None:
+                 # Fallback to first element of categories if it exists and is a tensor
+                 cats = targets.get('categories')
+                 if isinstance(cats, (list, tuple)) and len(cats) > 0 and isinstance(cats[0], torch.Tensor):
+                      cmd_idx = cats[0] 
 
-        l_traj = (raw_traj_loss * traj_weights).mean()
+            if isinstance(cmd_idx, (list, tuple)):
+                 cmd_idx = torch.tensor(cmd_idx, device=self.device)
+
+            if isinstance(cmd_idx, torch.Tensor):
+                if cmd_idx.dim() > 1:
+                    cmd_idx = cmd_idx.argmax(dim=-1)
+
+                if cmd_idx.shape[0] == traj_weights.shape[0]:
+                    turn_mask = (cmd_idx == 1) | (cmd_idx == 2)
+                    traj_weights[turn_mask] *= 2.0
+
+            l_traj = (raw_traj_loss * traj_weights).mean() # Averages over batch B
 
         # 3. Smoothness Loss
-        diff_pred = pred_wp[:, 1:] - pred_wp[:, :-1]
-        accel_pred = diff_pred[:, 1:] - diff_pred[:, :-1]
-        l_smooth = accel_pred.pow(2).mean()
+        l_smooth = torch.tensor(0.0).to(self.device)
+        if pred_wp is not None:
+            diff_pred = pred_wp[:, 1:] - pred_wp[:, :-1]
+            accel_pred = diff_pred[:, 1:] - diff_pred[:, :-1]
+            l_smooth = accel_pred.pow(2).mean()
 
         # 4. Command Gate Sparsity Loss
         l_gate = torch.tensor(0.0).to(self.device)
@@ -288,23 +309,39 @@ class CombinedLoss(nn.Module):
         l_cls = torch.tensor(0.0).to(self.device)
         pred_cls = predictions.get('classes')
         gt_cls = targets.get('command_idx')
+        if gt_cls is None:
+             cats = targets.get('categories')
+             if isinstance(cats, (list, tuple)) and len(cats) > 0:
+                  gt_cls = cats[0]
+
         if pred_cls is not None and gt_cls is not None:
-             l_cls = self.ce_cls(pred_cls, gt_cls)
+             if isinstance(gt_cls, (list, tuple)):
+                  gt_cls = torch.tensor(gt_cls, device=self.device)
+             else:
+                  gt_cls = gt_cls.to(self.device)
+
+             if gt_cls.dim() > 1: gt_cls = gt_cls.argmax(dim=-1)
+             # Ensure gt_cls matches batch size of pred_cls
+             if gt_cls.shape[0] == pred_cls.shape[0]:
+                  l_cls = self.ce_cls(pred_cls, gt_cls.long())
 
         total = l_heat + self.lambda_traj * l_traj + self.lambda_det * l_det + \
                 self.lambda_smooth * l_smooth + self.lambda_gate * l_gate + \
                 self.lambda_cls * l_cls
+        
+        # Global Safety Check
+        if torch.isnan(total):
+             logger.warning("NaN loss detected! Zeroing out to prevent model destruction.")
+             total = torch.tensor(0.0).to(self.device).requires_grad_(True)
+
         return {
             'total': total,
             'traj': l_traj,
             'heatmap': l_heat_val,
             'det': l_det,
             'smooth': l_smooth,
-            'cls_aux': l_cls, # Auxiliary classification loss
+            'cls': l_cls,
             'gate': l_gate,
-            'box': det_loss_items[0],
-            'cls': det_loss_items[1],
-            'dfl': det_loss_items[2]
         }
 
 class TrajectoryLossAtomic(nn.Module):

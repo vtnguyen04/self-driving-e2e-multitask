@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 from unittest.mock import MagicMock, patch
 from neuro_pilot.nn.tasks import DetectionModel
-from neuro_pilot.nn.modules import HeatmapHead, TrajectoryHead, Detect
-from neuro_pilot.nn.modules.backbone import TimmBackbone
 
 class TestArchitectureIntegrity(unittest.TestCase):
     def setUp(self):
