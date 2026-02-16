@@ -225,12 +225,15 @@ def plot_results(csv_path: Union[str, Path], save_dir: Optional[Path] = None):
     plt.tight_layout(); plt.savefig(save_dir / "results.jpg", dpi=200); plt.close()
 
 def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_path: Union[str, Path],
-               names: Dict[int, str] = {}, max_samples: int = 4, conf_thres: float = 0.25):
+               names: Dict[int, str] = {}, max_samples: int = 4, conf_thres: float = 0.1):
     """High-fidelity Mosaic report for batch inspection."""
     img_tensor = batch['image']
-    targets = batch.get('bboxes', batch.get('targets'))
-    waypoints = batch.get('waypoints')
-    if targets is None: return
+    
+    # Handle both direct and nested target structures from Trainer
+    targets = batch.get('targets', batch)
+    bboxes_gt = targets.get('bboxes')
+    waypoints_gt = targets.get('waypoints')
+    if bboxes_gt is None: return
     
     with torch.no_grad():
         img_bgr = ((torch.clamp(img_tensor * torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1,3,1,1) +
@@ -244,15 +247,31 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
     mosaic = np.full((N * H, grid_cols * W, 3), 40, dtype=np.uint8)
 
     detections = None
-    if output is not None and 'bboxes' in output:
-        detections = decode_and_nms(output['bboxes'], conf_thres=conf_thres)
+    if output is not None:
+        if 'bboxes' in output:
+            detections = decode_and_nms(output['bboxes'], conf_thres=conf_thres)
+        elif 'boxes' in output and 'scores' in output and 'feats' in output:
+            from .ops import make_anchors, non_max_suppression, dist2bbox
+            strides = torch.tensor([8, 16, 32], device=img_tensor.device)
+            anchors, stride_tensor = make_anchors(output['feats'], strides)
+            
+            reg_max = output['boxes'].shape[1] // 4
+            pred_dist = output['boxes'].permute(0, 2, 1) # [B, A, 4*reg_max]
+            if reg_max > 1:
+                proj = torch.arange(reg_max, dtype=pred_dist.dtype, device=img_tensor.device)
+                pred_dist = pred_dist.view(B, -1, 4, reg_max).softmax(3).matmul(proj)
+            
+            pred_bboxes = dist2bbox(pred_dist, anchors.unsqueeze(0), xywh=True) * stride_tensor
+            pred_scores = output['scores'].sigmoid()
+            combined = torch.cat([pred_bboxes.permute(0, 2, 1), pred_scores], dim=1)
+            detections = non_max_suppression(combined, conf_thres=conf_thres)
 
     for i in range(N):
         y_off = i * H
         
         # 1. Path Column
         can_p = img_bgr[i].copy(); ann_p = Annotator(can_p)
-        wp_gt = waypoints[i].cpu().numpy() if waypoints is not None else None
+        wp_gt = waypoints_gt[i].cpu().numpy() if waypoints_gt is not None else None
         if wp_gt is not None:
             wp_gt = (wp_gt + 1) / 2 * [W-1, H-1]
             ann_p.trajectory(wp_gt, color=(0, 255, 0)); ann_p.waypoints(wp_gt, color=(0, 200, 0))
@@ -263,75 +282,48 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             wp_p = wp_p[i].detach().cpu().numpy()
             if not np.isnan(wp_p).any():
                 wp_p = (wp_p + 1) / 2 * [W-1, H-1]
-                ann_p.trajectory(wp_p, color=(255, 0, 255)); ann_p.waypoints(wp_p, color=(200, 0, 200))
+                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=3); ann_p.waypoints(wp_p, color=(200, 0, 200))
         ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, 0:W] = ann_p.result()
 
         # 2. Vision Column (Detection)
         can_v = img_bgr[i].copy(); ann_v = Annotator(can_v, pil=True)
-        
-        # Ground Truth Bounding Boxes
-        gt_b = targets.get('bboxes', []) if isinstance(targets, dict) else targets
-        gt_c = targets.get('categories', []) if isinstance(targets, dict) else []
-
-        if i < len(gt_b):
-            boxes_to_plot = gt_b[i]
-            classes_to_plot = gt_c[i] if i < len(gt_c) else None
-            
-            # Convert to numpy if tensor
-            if torch.is_tensor(boxes_to_plot):
-                boxes_to_plot = boxes_to_plot.cpu().numpy()
-            if torch.is_tensor(classes_to_plot):
-                classes_to_plot = classes_to_plot.cpu().numpy()
-
-            if boxes_to_plot.ndim == 1 and boxes_to_plot.size > 0:
-                boxes_to_plot = boxes_to_plot.reshape(-1, 4)
-
-            for idx, b in enumerate(boxes_to_plot):
+        gt_b = bboxes_gt[i]
+        gt_c = targets.get('categories')[i] if 'categories' in targets else None
+        if gt_b is not None:
+            if torch.is_tensor(gt_b): gt_b = gt_b.cpu().numpy()
+            if torch.is_tensor(gt_c): gt_c = gt_c.cpu().numpy()
+            if gt_b.ndim == 1 and gt_b.size > 0: gt_b = gt_b.reshape(-1, 4)
+            for idx, b in enumerate(gt_b):
                 if b.sum() == 0: continue
-                # Handle different label formats (cls, x, y, w, h) or just (x, y, w, h)
-                cls_idx = int(classes_to_plot[idx]) if classes_to_plot is not None and idx < len(classes_to_plot) else -1
-                
-                # Check if box is normalized [0, 1]
+                cls_idx = int(gt_c[idx]) if gt_c is not None and idx < len(gt_c) else -1
                 if b.max() <= 1.01:
                     x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
                 else:
                     x1, y1, x2, y2 = b
-                
-                label = f"GT: {names.get(cls_idx, cls_idx)}" if cls_idx != -1 else "GT"
-                ann_v.box_label([x1, y1, x2, y2], label=label, color=(0, 255, 0))
+                ann_v.box_label([x1, y1, x2, y2], label=f"GT: {names.get(cls_idx, cls_idx)}", color=(0, 255, 0))
         
-        # Predicted Bounding Boxes
         if detections is not None and i < len(detections):
             det = detections[i]
-            if torch.is_tensor(det):
-                det = det.cpu().numpy()
-                
+            if torch.is_tensor(det): det = det.detach().cpu().numpy()
             for d in det:
-                # d: [x1, y1, x2, y2, conf, cls]
-                cls_id = int(d[5])
-                conf = d[4]
+                cls_id = int(d[5]); conf = d[4]
                 ann_v.box_label(d[:4], label=f"{names.get(cls_id, cls_id)} {conf:.2f}", color=colors(cls_id, True))
         ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, W:2*W] = ann_v.result()
 
         # 3. Heatmap Columns
         if has_hm:
-            # GT Heatmap
             from neuro_pilot.utils.losses import HeatmapWaypointLoss
             hm_gen = HeatmapWaypointLoss(device='cpu')
-            wp_gt_raw = waypoints if waypoints is not None else (targets.get('waypoints') if isinstance(targets, dict) else None)
-            
-            if wp_gt_raw is not None:
-                gt_wp_i = wp_gt_raw[i:i+1].cpu()
-                gt_hm = hm_gen.generate_heatmap(gt_wp_i, H, W).squeeze().numpy()
+            if waypoints_gt is not None:
+                gt_hm = hm_gen.generate_heatmap(waypoints_gt[i:i+1].cpu(), H, W).squeeze().numpy()
                 gt_hm = (gt_hm - gt_hm.min()) / (gt_hm.max() - gt_hm.min() + 1e-6)
                 can_gt = img_bgr[i].copy()
                 can_gt = cv2.addWeighted(cv2.applyColorMap((gt_hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, can_gt, 0.4, 0)
                 cv2.putText(can_gt, "GT HM", (10, 40), 0, 1.2, (255,255,255), 2)
                 mosaic[y_off:y_off+H, 2*W:3*W] = can_gt
             
-            # Pred Heatmap
             hm_tensor = output['heatmap']
             if isinstance(hm_tensor, dict): hm_tensor = hm_tensor.get('heatmap', next(iter(hm_tensor.values())))
             hm_i = hm_tensor[i].detach().cpu().numpy()

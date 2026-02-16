@@ -117,6 +117,9 @@ class Detect(BaseHead):
         dbox = self.decode_bboxes(self.dfl(x["boxes"]), self.anchors.unsqueeze(0)) * self.strides
         return dbox
 
+    def decode_bboxes(self, bboxes: torch.Tensor, anchors: torch.Tensor, xywh: bool = True) -> torch.Tensor:
+        return dist2bbox(bboxes, anchors, xywh=xywh and not self.end2end and not self.xyxy, dim=1)
+
     def bias_init(self):
         for i, (a, b) in enumerate(zip(self.one2many["box_head"], self.one2many["cls_head"])):
             a[-1].bias.data[:] = 1.0  # box

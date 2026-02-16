@@ -12,6 +12,7 @@ def run_real_training():
     # Increasing batch and image size for 6GB GPU optimization
     # Stabilizing loss weights
     overrides = {
+        "model_cfg": "neuro_pilot/cfg/models/yolo_all_tasks.yaml",
         "data": {
             "root_dir": "neuro_pilot/data",
             "batch_size": 32,  # Safer for 640px on 6GB
@@ -37,6 +38,7 @@ def run_real_training():
         },
         "trainer": {
             "experiment_name": "production_run_v3",
+            "image_size": 640,
             "max_epochs": 100,
             "learning_rate": 1e-3,   # AdamW standard
             "lr_final": 0.01,

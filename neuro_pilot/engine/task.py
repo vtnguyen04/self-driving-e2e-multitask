@@ -146,5 +146,4 @@ class MultiTask(BaseTask):
         return Validator(self.cfg, self.model, self.criterion, device=device)
 
     def load_weights(self, weights_path: Union[str, Path]):
-         ckpt = load_checkpoint(weights_path)
-         self.model.load_state_dict(ckpt['state_dict'], strict=False)
+         load_checkpoint(weights_path, self.model)

@@ -135,7 +135,7 @@ class DetectionModel(nn.Module):
             elif "heatmap" in name: self.head_indices["heatmap"] = i
             elif "classification" in name: self.head_indices["classification"] = i
 
-        self.heads = nn.ModuleList([self.model[i] for i in self.head_indices.values()])
+        self.heads = nn.ModuleDict({k: self.model[i] for k, i in self.head_indices.items()})
 
         # 2. Stride computation (if Detect head present)
         idx = self.head_indices.get("detect")

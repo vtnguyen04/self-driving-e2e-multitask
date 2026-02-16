@@ -49,7 +49,13 @@ class Results:
         # 3. Waypoints
         if waypoints and self.waypoints is not None:
             wp = self.waypoints.cpu().numpy()
-            annotator.waypoints(wp, color=(0, 255, 0))
+            # Denormalize from [-1, 1] to [0, W-1] and [0, H-1]
+            H, W = self.orig_img.shape[:2]
+            wp = (wp + 1) / 2 * [W - 1, H - 1]
+            
+            # Draw as trajectory line and waypoint dots
+            annotator.trajectory(wp, color=(255, 0, 255), thickness=2)
+            annotator.waypoints(wp, color=(200, 0, 200))
 
         return annotator.result()
 
