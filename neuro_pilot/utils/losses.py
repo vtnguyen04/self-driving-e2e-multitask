@@ -206,12 +206,15 @@ class CombinedLoss(nn.Module):
         self.traj_loss = nn.MSELoss(reduction='none')
         self.det_loss = DetectionLoss(model)
 
-        self.lambda_traj = config.loss.lambda_traj
-        self.lambda_det = config.loss.lambda_det
-        self.lambda_heatmap = config.loss.lambda_heatmap
-        self.lambda_smooth = config.loss.lambda_smooth
-        self.lambda_gate = getattr(config.loss, 'lambda_gate', 0.5)
-        self.lambda_cls = getattr(config.loss, 'lambda_cls', 1.0) # New cls loss weight
+        # Pull loss weights from global config, falling back to centralized defaults
+        loss_cfg = getattr(config, 'loss', config) if config else {}
+
+        self.lambda_traj = getattr(loss_cfg, 'lambda_traj', 0.05) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_traj', 0.05) if isinstance(loss_cfg, dict) else 0.05)
+        self.lambda_det = getattr(loss_cfg, 'lambda_det', 1.0) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_det', 1.0) if isinstance(loss_cfg, dict) else 1.0)
+        self.lambda_heatmap = getattr(loss_cfg, 'lambda_heatmap', 1.0) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_heatmap', 1.0) if isinstance(loss_cfg, dict) else 1.0)
+        self.lambda_smooth = getattr(loss_cfg, 'lambda_smooth', 0.1) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_smooth', 0.1) if isinstance(loss_cfg, dict) else 0.1)
+        self.lambda_gate = getattr(loss_cfg, 'lambda_gate', 0.5) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_gate', 0.5) if isinstance(loss_cfg, dict) else 0.5)
+        self.lambda_cls = getattr(loss_cfg, 'lambda_cls', 0.5) if isinstance(loss_cfg, (dict, object)) and not isinstance(loss_cfg, dict) else (loss_cfg.get('lambda_cls', 0.5) if isinstance(loss_cfg, dict) else 0.5)
         self.bce_gate = nn.BCELoss()
         self.ce_cls = nn.CrossEntropyLoss()
 

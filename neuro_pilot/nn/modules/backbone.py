@@ -13,9 +13,15 @@ class TimmBackbone(nn.Module):
         super().__init__()
         try:
             self.model = timm.create_model(model_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
-        except (RuntimeError, ImportError, Exception):
-            logger.warning(f"Failed to load pretrained {model_name} (Hugging Face hub or internet issue). Falling back to random init.")
-            self.model = timm.create_model(model_name, pretrained=False, features_only=features_only, out_indices=out_indices)
+        except (RuntimeError, ValueError) as e:
+            logger.warning(f"Failed to create timm model '{model_name}' with pretrained={pretrained}. Retrying without tag or fallback. Error: {e}")
+            # Try removing the tag (after the last '.')
+            base_name = model_name.split('.')[0]
+            try:
+                self.model = timm.create_model(base_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
+            except:
+                logger.error(f"Fallback failed for '{base_name}'. Using mock/fallback architecture.")
+                raise e
         self.feature_info = self.model.feature_info
 
     @staticmethod
@@ -48,6 +54,13 @@ class NeuroPilotBackbone(nn.Module):
     Standard NeuroPilot Shared Backbone (timm + PANet + Prompting).
     Optimized for multi-task composite architectures.
     """
+    @staticmethod
+    def get_channels(model_name):
+        # Maps keys to channels for NeuroPilotBackbone
+        if 'small' in model_name:
+            return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 32, 'gate_score': 1}
+        return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 48, 'gate_score': 1}
+
     def __init__(self, backbone_name='mobilenetv4_conv_small', num_commands=4, dropout_prob=0.0):
         super().__init__()
         self.backbone = timm.create_model(backbone_name, pretrained=True, features_only=True)

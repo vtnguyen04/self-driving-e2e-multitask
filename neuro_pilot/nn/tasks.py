@@ -32,63 +32,69 @@ def initialize_weights(model):
 def parse_model(d, ch):
     """Parse a NeuroPilot model dict into a PyTorch model."""
     logger.info(f"{'idx':>3}{'n':>10}{'params':>10}  {'module':<40}{'arguments':<30}")
-    anchors, nc, gd, gw, act = d.get("anchors"), d["nc"], d.get("depth_multiple", 1.0), d.get("width_multiple", 1.0), d.get("activation")
-    nm, nw = d.get("nm"), d.get("nw")
+    # Scaling factors: depth_multiple (gd), width_multiple (gw)
+    gd = d.get("depth_multiple", 1.0)
+    gw = d.get("width_multiple", 1.0)
+    nc, nm, nw = d["nc"], d.get("nm"), d.get("nw")
 
     layers, save, c2 = [], [], ch  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
-        m = eval(m) if isinstance(m, str) else m  # eval strings
+    for i, (f, n, m_name, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+        m = eval(m_name) if isinstance(m_name, str) else m_name
+        if not isinstance(args, list): args = [args] # ensure args is a list
+
+        # Safe parameter substitution
         for j, a in enumerate(args):
-            if isinstance(a, str):
-                if a == "nc": args[j] = nc
-                elif a == "nm": args[j] = nm
-                elif a == "nw": args[j] = nw
-                else:
-                    with contextlib.suppress(NameError, SyntaxError):
-                        args[j] = eval(a)
+            if a == "nc": args[j] = nc
+            elif a == "nm": args[j] = nm
+            elif a == "nw": args[j] = nw
+            elif a == "None": args[j] = None
+            elif a == "True": args[j] = True
+            elif a == "False": args[j] = False
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m in {Conv, Bottleneck, C3k2, SPPF}:
+        if m in {Conv, Bottleneck, C3k2, SPPF, C2f, C3, C3k, C2PSA}:
             c1, c2 = ch[f], args[0]
             if c2 != nc:  # if not output
                 c2 = make_divisible(c2 * gw, 8)
-
             args = [c1, c2, *args[1:]]
+            if m in {C3k2, C2f, C3, C3k, C2PSA}:
+                args.insert(2, n)  # number of bottlenecks
+                n = 1
         elif m is nn.Upsample:
-             # args from YAML: [None, 2, 'bilinear'] -> [size, scale_factor, mode]
-             # or [2, 'bilinear'] -> [size, scale_factor, mode]
-             if len(args) == 2: # [scale, mode]
-                 args = [None, args[0], args[1]]
-             elif len(args) == 3: # [size, scale, mode]
-                 pass
+             if len(args) == 2: args = [None, args[0], args[1]]
         elif m is TimmBackbone:
-             # Dynamically query channels from the module class
+             model_name = args[0]
+             c2 = m.get_channels(model_name)
+        elif m is NeuroPilotBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
         elif m is SelectFeature:
              idx = args[0]
-             # f is -1 (previous layer), which is TimmBackbone
              backbone_ch = ch[f]
-             c2 = backbone_ch[idx] if isinstance(backbone_ch, list) else backbone_ch
+             if isinstance(backbone_ch, dict):
+                 c2 = backbone_ch[idx]
+             elif isinstance(backbone_ch, (list, tuple)):
+                 c2 = backbone_ch[idx]
+             else:
+                 c2 = backbone_ch
         elif m in {Detect, HeatmapHead, TrajectoryHead, ClassificationHead}:
+             print(f"  Head: m={m}, f={f}")
              c2 = ch[f[0]] if isinstance(f, list) else ch[f]
-             # ch_in should always be a list for these heads
              ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
              args.insert(0, ch_in)
         elif m is Concat:
              c2 = sum(ch[x] for x in f)
         else:
-            c2 = ch[f] if isinstance(f, int) else ch[f[0]]
+             c2 = ch[f] if isinstance(f, int) else ch[f[0]]
 
-        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
-        t = str(m)[8:-2].replace("__main__.", "")  # module type
-        np = sum(x.numel() for x in m_.parameters())  # number params
-        m_.i, m_.f, m_.type, m_.np = i, f, t, np  # index, 'from' index, type, number params
+        m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)
+        t = str(m)[8:-2].replace("__main__.", "")
+        np = sum(x.numel() for x in m_.parameters())
+        m_.i, m_.f, m_.type, m_.np = i, f, t, np
         logger.info(f"{i:>3}{n_:>10}{np:>10}  {t:<40}{str(args):<30}")
-        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
+        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
         layers.append(m_)
-        if i == 0:
-            ch = []
+        if i == 0: ch = []
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
@@ -142,7 +148,7 @@ class DetectionModel(nn.Module):
                 if isinstance(feats, (list, tuple)):
                     m.stride = torch.tensor([s / x.shape[-2] for x in feats])
                 else:
-                    m.stride = torch.tensor([8., 16., 32.]) # fallback
+                    m.stride = torch.tensor([s / feats.shape[-2]]) # Adaptive stride for single scale
             self.stride = m.stride
             self.train()
 
@@ -177,6 +183,10 @@ class DetectionModel(nn.Module):
                         if isinstance(val, dict) and "feats" in val:
                             val = val["feats"]
                         input_x.append(val)
+
+            # 2.5 Ensure x is a list for heads that expect it, even if single input
+            if isinstance(m, (Detect, HeatmapHead)) and not isinstance(input_x, list):
+                input_x = [input_x]
 
             # 3. Call module
             x = m(input_x, **kwargs) if hasattr(m, 'forward_with_kwargs') else m(input_x)

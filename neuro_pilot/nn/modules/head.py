@@ -219,7 +219,11 @@ class TrajectoryHead(BaseHead):
         b0, b1, b2, b3 = (1-t)**3, 3*(1-t)**2*t, 3*(1-t)*t**2, t**3
         return torch.stack([b0, b1, b2, b3], dim=1)
 
-    def forward(self, x, cmd_onehot=None, heatmap=None):
+    def forward(self, x, **kwargs):
+        cmd_onehot = kwargs.get('cmd_onehot')
+        cmd_idx = kwargs.get('cmd_idx')
+        heatmap = kwargs.get('heatmap')
+
         if isinstance(x, list):
             p5 = x[0]
             if len(x) > 1 and heatmap is None: heatmap = x[1]
@@ -229,10 +233,11 @@ class TrajectoryHead(BaseHead):
         B = p5.shape[0]
 
         # Handle Command
-        if cmd_onehot is None:
-             cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
-        else:
-             cmd_idx = cmd_onehot.argmax(dim=1)
+        if cmd_idx is None:
+            if cmd_onehot is None:
+                 cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
+            else:
+                 cmd_idx = cmd_onehot.argmax(dim=1)
 
         # Feature Gating with Heatmap
         if heatmap is not None:
@@ -265,17 +270,26 @@ class TrajectoryHead(BaseHead):
         return {'trajectory': res, **res}
 
 class ClassificationHead(nn.Module):
-    """Simple head for classification tasks like Speed Limit Recognition."""
-    def __init__(self, ch, nc, hidden_dim=256):
+    """
+    Standard Classification Head for global attributes (e.g., Speed Limit, Weather, Command Intent).
+    Inspired by Ultralytics Classify module.
+    """
+    def __init__(self, ch, nc, hidden_dim=256, dropout=0.0):
         super().__init__()
-        self.avgpool = nn.AdaptiveAvgPool2d(1)
+        # ch can be a list (from multiple layers) or a single int
+        c_in = ch[-1] if isinstance(ch, (list, tuple)) else ch
+
+        self.pool = nn.AdaptiveAvgPool2d(1)
         self.conv = nn.Sequential(
-            nn.Linear(ch[0] if isinstance(ch, list) else ch, hidden_dim),
+            nn.Linear(c_in, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(inplace=True),
+            nn.Dropout(dropout) if dropout > 0 else nn.Identity(),
             nn.Linear(hidden_dim, nc)
         )
 
     def forward(self, x):
-        if isinstance(x, (list, tuple)): x = x[-1]
-        x = self.avgpool(x).flatten(1)
+        if isinstance(x, (list, tuple)):
+            x = x[-1]
+        x = self.pool(x).flatten(1)
         return {"classes": self.conv(x)}
