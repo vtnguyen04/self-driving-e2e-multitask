@@ -1,0 +1,49 @@
+Metadata-Version: 2.4
+Name: neuro_pilot
+Version: 1.0.0
+Summary: NeuroPilot: Unified E2E Autonomous Driving Framework (Multitask, World-Model Ready)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: torch>=2.0.0
+Requires-Dist: torchvision>=0.15.0
+Requires-Dist: timm>=0.9.0
+Requires-Dist: albumentations>=1.3.0
+Requires-Dist: tqdm
+Requires-Dist: numpy
+Requires-Dist: matplotlib>=3.10.8
+Requires-Dist: pandas>=2.3.3
+Requires-Dist: opencv-python
+Requires-Dist: pyyaml
+Requires-Dist: onnx
+Requires-Dist: onnxscript>=0.5.7
+Requires-Dist: pydantic>=2.0
+Requires-Dist: rich
+Requires-Dist: fastapi>=0.128.0
+Requires-Dist: uvicorn>=0.40.0
+Requires-Dist: python-multipart>=0.0.21
+Requires-Dist: torchmetrics>=1.8.2
+Requires-Dist: scikit-learn>=1.7.2
+Requires-Dist: seaborn>=0.13.2
+Requires-Dist: pycocotools>=2.0.11
+
+# BFMC E2E Trajectory Prediction
+
+High-performance End-to-End model for Bosch Future Mobility Challenge (BFMC).
+
+## Architecture
+- **Backbone**: MobileNetV4-Conv-Small (via `timm`)
+- **Heads**:
+  - Trajectory Prediction (Gated by Visual Context)
+  - Object Detection (Anchor-Free YOLO-style)
+- **Target**: NVIDIA Jetson Orin Nano (<30ms latency)
+
+## Setup
+```bash
+pip install -r requirements.txt
+```
+
+## Structure
+- `models/`: PyTorch model definitions
+- `data/`: Dataloaders and augmentation
+- `utils/`: Loss functions and metrics
+- `deploy/`: ONNX export and TensorRT utils

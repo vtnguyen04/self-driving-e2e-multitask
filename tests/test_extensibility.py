@@ -44,7 +44,7 @@ def test_extensibility():
 
     # Initialize NeuroPilot with the new task
     try:
-        model = NeuroPilot(model="dummy_config.yaml", task="simple_test_task")
+        model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml", task="simple_test_task")
     except Exception as e:
         print(f"FAILED: Could not initialize NeuroPilot with custom task. Error: {e}")
         import traceback

@@ -1,69 +1,46 @@
-# BFMC E2E Model Configuration (YOLO Style)
-# Parameters
-nc: 14  # number of classes
-nm: 4   # number of commands (for PromptEncoder)
-nw: 10  # number of waypoints
+# Professional YOLO-style Model Configuration
+nc: 14
+nm: 4
+nw: 10
 
-# Backbone
-# [from, repeats, module, args]
+# Backbone: Definable as a list or a single Timm module
+# MobilenetV4-Small Features: P1/2:32, P2/4:32, P3/8:64, P4/16:96, P5/32:960
 backbone:
-  # Using TIMM backbone wrapper
-  # args: [model_name, pretrained, features_only, out_indices]
-  - [-1, 1, TimmBackbone, ['mobilenetv4_conv_small.e2400_r224_in1k', True, True]]
-  # Output features: [c2, c3, c4, c5] channels
+  - [-1, 1, TimmBackbone, ['mobilenetv4_conv_small.e2400_r224_in1k', True, True]] # 0
 
-# Head
+# Head (Neck + MT Heads)
 head:
-  # PANet/FPN Neck
-  - [-1, 1, SPPF, [128, 5]] # 1 (P5)
-  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 2
-  - [[-1, 2], 1, Concat, [1]] # 3 (cat P5_up, P4) (index 2 is P4 from backbone? No, backbone returns list)
-  # Actually, with TimmBackbone, we need a way to select specific features.
-  # Let's assume TimmBackbone returns a list of features.
-  # But YOLO parser usually works layer by layer.
+  # 1. Feature Selection
+  - [0, 1, SelectFeature, [4]]   # 1 (P5 - 960ch - stride 32)
+  - [0, 1, SelectFeature, [3]]   # 2 (P4 - 96ch - stride 16)
+  - [0, 1, SelectFeature, [2]]   # 3 (P3 - 64ch - stride 8)
+  - [0, 1, SelectFeature, [1]]   # 4 (P2 - 32ch - stride 4)
 
-  # Alternative: Define full structure layer by layer like YOLO?
-  # Or use a special "Input" layer that grabs from backbone?
+  # 2. Language & Fusion (The "Command" take-in layer)
+  - [1, 1, LanguagePromptEncoder, [256, nm, 'embedding']] # 5 (Prompt -> 256ch Embedding)
+  - [1, 1, Conv, [256, 1, 1]]    # 6 (Compress Backbone P5: 960 -> 256)
+  - [[6, 5], 1, VLFusion, [256, 256]] # 7 (Fuse Compressed P5 with Command)
 
-  # Standard YOLO format:
-  # [from, repeats, module, args]
+  # 3. Neck
+  - [7, 1, SPPF, [256, 5]]       # 8 (Fused P5 -> SPPF)
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 9
+  - [[-1, 2], 1, Concat, [1]]    # 10 (cat 256 + 96 = 352)
+  - [-1, 1, C3k2, [128, 1]]      # 11 (P4_neck)
 
-  # Let's simplify: The generic parser will handle standard modules.
-  # For TIMM, we might need a distinct approach or purely definition based.
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 12
+  - [[-1, 3], 1, Concat, [1]]    # 13 (cat 128 + 64 = 192)
+  - [-1, 1, C3k2, [64, 1]]       # 14 (P3_neck)
 
-  # Let's stick to the current successful architecture first but exposed in YAML?
-  # Or just parameters?
+  - [-1, 1, Conv, [64, 3, 2]]    # 15
+  - [[-1, 11], 1, Concat, [1]]   # 16
+  - [-1, 1, C3k2, [128, 1]]      # 17
 
-  # User wants "replace layers, number of layers easily".
-  # So full definition is best.
+  - [-1, 1, Conv, [128, 3, 2]]   # 18
+  - [[-1, 8], 1, Concat, [1]]    # 19
+  - [-1, 1, C3k2, [256, 1]]      # 20
 
-  # Let's define the Custom Blocks in models/common.py first then usage here.
-  # But for now, let's keep it simple: Configuration of PARAMETERS first.
-
-  # Wait, User said "replace layers, number of layers".
-  # I MUST implement the list-based config.
-
-model:
-  # Backbone
-  - [-1, 1, Conv, [32, 3, 2]]  # 0-P1/2
-  - [-1, 1, Conv, [64, 3, 2]]  # 1-P2/4
-  - [-1, 1, C3k2, [64, 1]]      # 2
-  - [-1, 1, Conv, [128, 3, 2]] # 3-P3/8
-  - [-1, 2, C3k2, [128, 1]]     # 4
-  - [-1, 1, Conv, [256, 3, 2]] # 5-P4/16
-  - [-1, 2, C3k2, [256, 1]]     # 6
-  - [-1, 1, Conv, [512, 3, 2]] # 7-P5/32
-  - [-1, 1, C3k2, [512, 1]]     # 8
-  - [-1, 1, SPPF, [512, 5]]     # 9
-
-  # Neck
-  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 10
-  - [[-1, 6], 1, Concat, [1]] # 11 cat backbone P4
-  - [-1, 1, C3k2, [256, 1]] # 12
-
-  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 13
-  - [[-1, 4], 1, Concat, [1]] # 14 cat backbone P3
-  - [-1, 1, C3k2, [128, 1]] # 15 (P3)
-
-  # Heads
-  - [[15, 12, 9], 1, Detect, [nc]] # Detect(P3, P4, P5)
+  # 4. Multi-Task Heads
+  - [[14, 17, 20], 1, Detect, [nc]]        # 21 (Detection)
+  - [[14, 4], 1, HeatmapHead, [1]]         # 22 (Heatmap): [P3_neck, P2_backbone]
+  - [[20, 22], 1, TrajectoryHead, [nm, nw]] # 23 (Trajectory)
+  - [20, 1, ClassificationHead, [nm]]      # 24 (Commands)

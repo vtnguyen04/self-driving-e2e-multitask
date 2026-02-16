@@ -2,7 +2,12 @@ import sys
 from unittest.mock import MagicMock
 
 # Mock dependencies before imports
-sys.modules["timm"] = MagicMock()
+import unittest.mock as mock
+if "timm" in sys.modules:
+    del sys.modules["timm"]
+sys.modules["timm"] = mock.MagicMock()
+
+sys.modules["timm"].create_model.return_value.feature_info.channels.return_value = [32, 32, 64, 96, 960]
 sys.modules["torchvision"] = MagicMock()
 sys.modules["torchvision.ops"] = MagicMock()
 
@@ -31,14 +36,16 @@ class TestCommandGate(unittest.TestCase):
         lang = torch.randn(1, 1, 32)
 
         # 1. Run with normal gate
-        out_normal, gate_out = fusion(x, lang)
+        out = fusion(x, lang)
+        out_normal, gate_out = out["feats"], out["gate_score"]
         self.assertEqual(out_normal.shape, x.shape)
 
         # 2. Mock gate to return 0 (Closed Gate)
         original_gate_forward = fusion.gate.forward
         fusion.gate.forward = lambda feature: torch.zeros(1, 1, 1)
 
-        out_closed, _ = fusion(x, lang)
+        out_closed_dict = fusion(x, lang)
+        out_closed = out_closed_dict["feats"]
 
         # If gate is 0, output should be exactly input (after norm)
         # Because: x_flat = norm(x_flat + 0 * attn) = norm(x_flat)

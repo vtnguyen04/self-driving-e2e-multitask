@@ -13,7 +13,7 @@ def test_full_pipeline():
     device = 'cpu'
 
     # 2. Model
-    model = NeuroPilotNet(num_classes=14).to(device)
+    model = NeuroPilotNet(cfg="neuro_pilot/cfg/models/yolo_style.yaml", nc=14).to(device)
 
     # 3. Loss
     criterion = CombinedLoss(cfg, model, device=device)
@@ -28,11 +28,12 @@ def test_full_pipeline():
     targets = {
         'waypoints': torch.randn(B, 10, 2).to(device),
         'bboxes': [torch.tensor([[0.5, 0.5, 0.2, 0.2]]).to(device)] * B,
-        'categories': [torch.tensor([0]).to(device)] * B
+        'categories': [torch.tensor([0]).to(device)] * B,
+        'command_idx': torch.tensor([0, 1]).to(device) # GT labels for ClassificationHead
     }
 
     # 5. Forward
-    output = model(img, cmd)
+    output = model(img, cmd_onehot=cmd)
 
     # 6. Loss calculation
     loss_dict = criterion.advanced(output, targets)

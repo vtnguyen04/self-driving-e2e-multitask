@@ -1,24 +1,46 @@
-import sys
-from unittest.mock import MagicMock
-
-# Mock dependencies
-sys.modules["timm"] = MagicMock()
-sys.modules["torchvision"] = MagicMock()
-sys.modules["torchvision.ops"] = MagicMock()
-sys.modules["cv2"] = MagicMock()
-
 import unittest
 import torch
+import torch.nn as nn
+from unittest.mock import MagicMock, patch
 from neuro_pilot.nn.tasks import DetectionModel
 from neuro_pilot.nn.modules import HeatmapHead, TrajectoryHead, Detect
+from neuro_pilot.nn.modules.backbone import TimmBackbone
 
 class TestArchitectureIntegrity(unittest.TestCase):
     def setUp(self):
         self.cfg_path = 'neuro_pilot/cfg/models/neuro_pilot_v2.yaml'
         self.device = torch.device('cpu')
-        # Ensure model is created with correct strides
-        # We might need to mock the backbone to return specific shapes
+
+        # Patch TimmBackbone to return expected list of features
+        # [c2, c3, c4, c5] -> [64, 128, 256, 512] usually
+        self.backbone_patcher = patch('neuro_pilot.nn.tasks.TimmBackbone')
+        self.mock_backbone_cls = self.backbone_patcher.start()
+        # Mock the static method get_channels to return sane values
+        self.mock_backbone_cls.get_channels.return_value = [32, 32, 64, 96, 960]
+
+        # Instantiate mock and define its behavior
+        self.mock_backbone = MagicMock(spec=nn.Module)
+        self.mock_backbone_cls.return_value = self.mock_backbone
+        # Mock the static method get_channels
+        self.mock_backbone_cls.get_channels.return_value = [32, 32, 64, 96, 960]
+
+        def mock_forward(x, **kwargs):
+             s = x.shape[-1]
+             # P1/2, P2/4, P3/8, P4/16, P5/32
+             return [
+                 torch.randn(1, 32, s // 2, s // 2),
+                 torch.randn(1, 32, s // 4, s // 4),
+                 torch.randn(1, 64, s // 8, s // 8),
+                 torch.randn(1, 96, s // 16, s // 16),
+                 torch.randn(1, 960, s // 32, s // 32)
+             ]
+        self.mock_backbone.side_effect = mock_forward
+        self.mock_backbone.type = "TimmBackbone"
+
         self.model = DetectionModel(cfg=self.cfg_path, verbose=False).to(self.device)
+
+    def tearDown(self):
+        self.backbone_patcher.stop()
 
     def test_graph_connectivity(self):
         self.assertIn('heatmap', self.model.head_indices)

@@ -1,15 +1,5 @@
-import sys
-from unittest.mock import MagicMock, patch
-
-# Mock dependencies properly
-sys.modules["cv2"] = MagicMock()
-sys.modules["albumentations"] = MagicMock()
-sys.modules["albumentations.pytorch"] = MagicMock()
-if "torchvision" not in sys.modules:
-    sys.modules["torchvision"] = MagicMock()
-import torchvision
-
 import unittest
+from unittest.mock import MagicMock, patch
 import torch
 import numpy as np
 from neuro_pilot.data.neuro_pilot_dataset_v2 import NeuroPilotDataset, custom_collate_fn, Sample
