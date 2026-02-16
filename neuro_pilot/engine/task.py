@@ -129,7 +129,8 @@ class MultiTask(BaseTask):
         return model
 
     def build_criterion(self) -> nn.Module:
-        self.criterion = CombinedLoss(self.cfg, self.model)
+        device = next(self.model.parameters()).device if self.model else None
+        self.criterion = CombinedLoss(self.cfg, self.model, device=device)
         return self.criterion
 
     def get_trainer(self) -> Trainer:

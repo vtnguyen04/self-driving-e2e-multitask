@@ -10,11 +10,11 @@ from neuro_pilot.utils.tal import TaskAlignedAssigner, dist2bbox, make_anchors, 
 
 class HeatmapWaypointLoss(nn.Module):
     """Refined Heatmap Loss for sharp, thin midline."""
-    def __init__(self, sigma=2.0, device='cuda'):
+    def __init__(self, sigma=2.0, device=None):
         super().__init__()
         self.sigma = sigma
-        self.device = device
-        self.bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([20.0]).to(device))
+        self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([20.0]).to(self.device))
 
     def generate_heatmap(self, coords, H, W):
         B, K, _ = coords.shape
@@ -203,10 +203,17 @@ class DetectionLoss:
         return loss, loss.detach()
 
 class CombinedLoss(nn.Module):
-    def __init__(self, config, model, device='cuda'):
+    def __init__(self, config, model, device=None):
         super().__init__()
-        self.device = device
-        self.heatmap_loss = HeatmapWaypointLoss(device=device)
+        # Infer device from model if not explicitly provided
+        if device is None and model is not None:
+            try:
+                device = next(model.parameters()).device
+            except StopIteration:
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        self.device = device if device else ('cuda' if torch.cuda.is_available() else 'cpu')
+        self.heatmap_loss = HeatmapWaypointLoss(device=self.device)
         self.traj_loss = nn.MSELoss(reduction='none')
         self.det_loss = DetectionLoss(model)
 
