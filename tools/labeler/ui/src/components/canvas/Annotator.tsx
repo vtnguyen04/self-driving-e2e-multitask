@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { BBox, Waypoint } from '../../types';
+import { Check, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCanvasTransform } from '../../hooks/useCanvasTransform';
-import { Search, Check } from 'lucide-react';
+import { BBox, Waypoint } from '../../types';
 
 interface AnnotatorProps {
   imageSrc: string;
@@ -42,15 +42,15 @@ export const Annotator: React.FC<AnnotatorProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const quickSearchRef = useRef<HTMLInputElement>(null);
-  
+
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const { transform, setTransform, handleZoom, handlePan } = useCanvasTransform();
-  
+
   const [isDrawing, setIsDrawing] = useState(false);
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null);
   const [dragInfo, setDragInfo] = useState<{ type: string; index: number; handle?: string; startX: number; startY: number } | null>(null);
   const [mouseWorld, setMouseWorld] = useState({ x: 0, y: 0 });
-  
+
   // Floating Search State
   const [searchTerm, setSearchSearchTerm] = useState('');
 
@@ -90,7 +90,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d')!;
     const container = canvas.parentElement!;
-    
+
     const ratio = img.width / img.height;
     canvas.width = container.clientWidth;
     canvas.height = container.clientWidth / ratio;
@@ -178,7 +178,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
                 ctx.stroke();
             });
         }
-        
+
         waypoints.forEach((p) => {
             ctx.fillStyle = '#fff';
             ctx.beginPath();
@@ -255,70 +255,95 @@ export const Annotator: React.FC<AnnotatorProps> = ({
     }
   };
 
-  const onMouseMove = (e: React.MouseEvent) => {
-    const world = toWorld(e.clientX, e.clientY);
-    setMouseWorld(world);
-    if (!dragInfo && !isDrawing) return;
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+        if (!dragInfo && !isDrawing) {
+            // Still update mouseWorld for crosshairs
+            const world = toWorld(e.clientX, e.clientY);
+            setMouseWorld(world);
+            return;
+        }
 
-    if (dragInfo?.type === 'pan') {
-        handlePan(e.clientX - dragInfo.startX, e.clientY - dragInfo.startY);
-        setDragInfo({ ...dragInfo, startX: e.clientX, startY: e.clientY });
-    } else if (dragInfo?.type === 'ctrl_point') {
-        const nextCtrls = [...control_points];
-        nextCtrls[dragInfo.index] = world;
-        const [p0, p1, p2, p3] = nextCtrls;
-        const nextWaypoints: Waypoint[] = [];
-        for (let i = 0; i < 10; i++) nextWaypoints.push(getBezierPoint(p0, p1, p2, p3, i / 9));
-        onUpdate({ control_points: nextCtrls, waypoints: nextWaypoints });
-    } else if (dragInfo?.type === 'point') {
-        const newWps = [...waypoints];
-        newWps[dragInfo.index] = world;
-        onUpdate({ waypoints: newWps, control_points: [] });
-    } else if (dragInfo?.type === 'resize') {
-        const newBoxes = [...bboxes];
-        const b = { ...newBoxes[dragInfo.index] };
-        let x1 = b.cx - b.w/2, y1 = b.cy - b.h/2, x2 = b.cx + b.w/2, y2 = b.cy + b.h/2;
-        if (dragInfo.handle === 'tl') { x1 = world.x; y1 = world.y; }
-        if (dragInfo.handle === 'tr') { x2 = world.x; y1 = world.y; }
-        if (dragInfo.handle === 'bl') { x1 = world.x; y2 = world.y; }
-        if (dragInfo.handle === 'br') { x2 = world.x; y2 = world.y; }
-        newBoxes[dragInfo.index] = { cx: (x1+x2)/2, cy: (y1+y2)/2, w: Math.abs(x2-x1), h: Math.abs(y2-y1), category: b.category };
-        onUpdate({ bboxes: newBoxes });
-    } else if (dragInfo?.type === 'box') {
-        const newBoxes = [...bboxes];
-        const box = newBoxes[dragInfo.index];
-        const prevWorld = toWorld(dragInfo.startX, dragInfo.startY);
-        const dx = world.x - prevWorld.x;
-        const dy = world.y - prevWorld.y;
-        newBoxes[dragInfo.index] = { ...box, cx: box.cx + dx, cy: box.cy + dy };
-        onUpdate({ bboxes: newBoxes });
-        setDragInfo({ ...dragInfo, startX: e.clientX, startY: e.clientY });
-    }
-  };
+        const world = toWorld(e.clientX, e.clientY);
+        setMouseWorld(world);
 
-  const handleMouseUp = () => {
-    if (isDrawing && startPos) {
-      const w = Math.abs(mouseWorld.x - startPos.x);
-      const h = Math.abs(mouseWorld.y - startPos.y);
-      if (w > 0.001 && h > 0.001) {
-          const newBox: BBox = { cx: (startPos.x + mouseWorld.x) / 2, cy: (startPos.y + mouseWorld.y) / 2, w, h, category: 0 };
-          onUpdate({ bboxes: [...bboxes, newBox] });
-          onSelectBBox?.(bboxes.length);
-      }
-    }
-    setDragInfo(null); setIsDrawing(false); setStartPos(null);
-  };
+        if (dragInfo?.type === 'pan') {
+            handlePan(e.clientX - dragInfo.startX, e.clientY - dragInfo.startY);
+            setDragInfo({ ...dragInfo, startX: e.clientX, startY: e.clientY });
+        } else if (dragInfo?.type === 'ctrl_point') {
+            const nextCtrls = [...control_points];
+            nextCtrls[dragInfo.index] = world;
+            const [p0, p1, p2, p3] = nextCtrls;
+            const nextWaypoints: Waypoint[] = [];
+            for (let i = 0; i < 10; i++) nextWaypoints.push(getBezierPoint(p0, p1, p2, p3, i / 9));
+            onUpdate({ control_points: nextCtrls, waypoints: nextWaypoints });
+        } else if (dragInfo?.type === 'point') {
+            const newWps = [...waypoints];
+            newWps[dragInfo.index] = world;
+            onUpdate({ waypoints: newWps, control_points: [] });
+        } else if (dragInfo?.type === 'resize') {
+            const newBoxes = [...bboxes];
+            const b = { ...newBoxes[dragInfo.index] };
+            let x1 = b.cx - b.w/2, y1 = b.cy - b.h/2, x2 = b.cx + b.w/2, y2 = b.cy + b.h/2;
+            if (dragInfo.handle === 'tl') { x1 = world.x; y1 = world.y; }
+            if (dragInfo.handle === 'tr') { x2 = world.x; y1 = world.y; }
+            if (dragInfo.handle === 'bl') { x1 = world.x; y2 = world.y; }
+            if (dragInfo.handle === 'br') { x2 = world.x; y2 = world.y; }
+            newBoxes[dragInfo.index] = { cx: (x1+x2)/2, cy: (y1+y2)/2, w: Math.abs(x2-x1), h: Math.abs(y2-y1), category: b.category };
+            onUpdate({ bboxes: newBoxes });
+        } else if (dragInfo?.type === 'box') {
+            const newBoxes = [...bboxes];
+            const box = newBoxes[dragInfo.index];
+            const prevWorld = toWorld(dragInfo.startX, dragInfo.startY);
+            const dx = world.x - prevWorld.x;
+            const dy = world.y - prevWorld.y;
+            newBoxes[dragInfo.index] = { ...box, cx: box.cx + dx, cy: box.cy + dy };
+            onUpdate({ bboxes: newBoxes });
+            setDragInfo({ ...dragInfo, startX: e.clientX, startY: e.clientY });
+        }
+    };
+
+    const handleGlobalMouseUp = () => {
+        if (isDrawing && startPos) {
+            const w = Math.abs(mouseWorld.x - startPos.x);
+            const h = Math.abs(mouseWorld.y - startPos.y);
+            if (w > 0.001 && h > 0.001) {
+                const newBox: BBox = { cx: (startPos.x + mouseWorld.x) / 2, cy: (startPos.y + mouseWorld.y) / 2, w, h, category: 0 };
+                onUpdate({ bboxes: [...bboxes, newBox] });
+                onSelectBBox?.(bboxes.length);
+            }
+        }
+        setDragInfo(null);
+        setIsDrawing(false);
+        setStartPos(null);
+    };
+
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+        window.removeEventListener('mousemove', handleGlobalMouseMove);
+        window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [dragInfo, isDrawing, startPos, mouseWorld, bboxes, waypoints, control_points, toWorld, handlePan, onUpdate, onSelectBBox]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     const onWheel = (e: WheelEvent) => {
+      // If the event target is inside a scrollable element, don't zoom
+      const target = e.target as HTMLElement;
+      if (target && target.closest('.overflow-y-auto')) {
+          return; // Let the local scroll happen
+      }
+
       e.preventDefault(); e.stopPropagation();
       const rect = container.getBoundingClientRect();
       handleZoom(e.deltaY, e.clientX - rect.left, e.clientY - rect.top);
     };
-    container.addEventListener('wheel', onWheel, { passive: false, capture: true });
-    return () => container.removeEventListener('wheel', onWheel, { capture: true } as any);
+    // Removed capture: true to allow scrollable children to handle events first if needed,
+    // though we use the 'target' check above for more precision.
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
   }, [handleZoom]);
 
   const filteredQuickClasses = useMemo(() => {
@@ -336,7 +361,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
   return (
     <div ref={containerRef} className="relative w-full h-full bg-[#050505] overflow-hidden flex items-center justify-center rounded-2xl border border-white/20 shadow-inner select-none" style={{ overscrollBehavior: 'none', touchAction: 'none' }}>
       {img ? (
-        <canvas ref={canvasRef} onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={handleMouseUp} onContextMenu={e => e.preventDefault()} className="cursor-crosshair transition-opacity duration-300 block" />
+        <canvas ref={canvasRef} onMouseDown={onMouseDown} onContextMenu={e => e.preventDefault()} className="cursor-crosshair transition-opacity duration-300 block" />
       ) : (
         <div className="flex flex-col items-center gap-4">
             <div className="w-12 h-12 border-4 border-accent border-t-transparent rounded-full animate-spin" />
@@ -346,16 +371,19 @@ export const Annotator: React.FC<AnnotatorProps> = ({
 
       {/* Floating Quick Search Picker */}
       {selectedBoxPos && (
-        <div 
+        <div
             className="absolute z-[60] flex flex-col gap-1 animate-in slide-in-from-top-2 duration-200"
-            style={{ left: selectedBoxPos.x + 10, top: selectedBoxPos.y - 10 }}
+            style={{
+                left: selectedBoxPos.x + 40, // More offset to avoid blocking handles
+                top: selectedBoxPos.y - 20
+            }}
         >
             <div className="bg-[#0a0a0c] border-2 border-accent/50 rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.8)] overflow-hidden min-w-[180px]">
                 <div className="flex items-center px-3 py-2 bg-white/5 gap-2 border-b border-white/10">
                     <Search className="w-3.5 h-3.5 text-accent" />
-                    <input 
+                    <input
                         ref={quickSearchRef}
-                        type="text" 
+                        type="text"
                         placeholder="Search class..."
                         value={searchTerm}
                         onChange={(e) => setSearchSearchTerm(e.target.value)}
