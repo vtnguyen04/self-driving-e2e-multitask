@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuroPilot Labeler Pro</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        .file-item {
+            padding: 8px 12px;
+            margin: 4px 0;
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+        .file-item:hover { background: var(--bg-card); color: white; }
+        .file-item.labeled { border-left: 3px solid var(--success); }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <h2 style="font-size: 18px; margin-bottom: 20px;">NP Labeler Pro</h2>
+
+            <div style="margin-bottom: 20px;">
+                <button id="btn-publish" class="btn-pro" style="width: 100%;">Publish Version</button>
+            </div>
+
+            <div style="flex-grow: 1; overflow-y: auto;">
+                <h3 style="font-size: 12px; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 1px;">Samples</h3>
+                <div id="file-list"></div>
+            </div>
+        </div>
+
+        <!-- Viewport -->
+        <div class="viewport">
+            <div id="canvas-container">
+                <canvas id="canvas"></canvas>
+            </div>
+
+            <!-- Floating Controls -->
+            <div style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px;">
+                <div class="card-glass" style="display: flex; gap: 15px; align-items: center;">
+                    <button id="btn-bbox-mode" class="btn-pro" style="background: var(--bg-card);">BBox (B)</button>
+                    <button id="btn-wp-mode" class="btn-pro" style="background: var(--bg-card);">Waypoints (W)</button>
+                    <div style="width: 1px; height: 20px; background: var(--border);"></div>
+                    <button id="btn-save" class="btn-pro">Save Changes (S)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Inspector -->
+        <div class="inspector">
+            <h3 style="font-size: 14px; margin-bottom: 15px;">Properties</h3>
+            <div class="card-glass">
+                <label style="font-size: 12px; color: var(--text-secondary);">Command</label>
+                <select id="cmdSelect" style="width: 100%; background: var(--bg-main); border: 1px solid var(--border); color: white; padding: 5px; border-radius: 4px; margin-top: 5px;">
+                    <option value="0">FOLLOW LANE</option>
+                    <option value="1">LEFT</option>
+                    <option value="2">RIGHT</option>
+                    <option value="3">STRAIGHT</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
