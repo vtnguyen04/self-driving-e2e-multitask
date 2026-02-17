@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from .routers import label_router, version_router
+from .routers import label_router, version_router, upload_router
 from .core.config import Config
 from pathlib import Path
 
@@ -19,6 +19,7 @@ app.add_middleware(
 # 1. API Routes (High Priority)
 app.include_router(label_router.router)
 app.include_router(version_router.router)
+app.include_router(upload_router.router)
 
 # UI Configuration
 ui_dist = Path(__file__).resolve().parent.parent / "ui" / "dist"
