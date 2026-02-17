@@ -10,6 +10,7 @@ class Config:
     TRAIN_DIR = DATA_DIR / "train" / "images"
     VAL_DIR = DATA_DIR / "val" / "images"
     TEST_DIR = DATA_DIR / "test" / "images"
+    EXPORT_DIR = BASE_DIR / "exports"
 
     # MinIO Configuration
     MINIO_ENDPOINT = "localhost:9000"
