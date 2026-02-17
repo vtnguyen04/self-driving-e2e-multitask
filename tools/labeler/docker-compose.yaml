@@ -12,3 +12,25 @@ services:
       - ./data/minio_data:/data
     command: server /data --console-address ":9001"
     restart: always
+
+  labeler-app:
+    build:
+      context: ../../ # Build from the project root
+      dockerfile: tools/labeler/Dockerfile # Specify Dockerfile location relative to context
+    container_name: neuropilot-labeler-app
+    ports:
+      - "8000:8000"
+    environment:
+      # These environment variables will override values in app.core.config.py
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_NAME: neuropilot-data
+    volumes:
+      # Persist the SQLite database file
+      - ./data/labeler.db:/app/tools/labeler/data/labeler.db
+      # Optionally, if local raw image folders are to be used within the container
+      # - ./data/raw:/app/tools/labeler/data/raw
+    depends_on:
+      - minio
+    restart: always
