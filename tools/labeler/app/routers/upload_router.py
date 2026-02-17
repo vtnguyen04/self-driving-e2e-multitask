@@ -4,12 +4,25 @@ from typing import List
 
 from app.services.upload_service import UploadService
 from app.core.config import Config
+from app.repositories.sample_repository import SampleRepository
+from app.repositories.project_repository import ProjectRepository
+from app.core.storage.storage_provider import MinioStorageProvider
 
 router = APIRouter(prefix="/api/v1/upload", tags=["upload"])
 
 
 def get_upload_service():
-    return UploadService(Config.DB_PATH)
+    db_path = Config.DB_PATH
+    sample_repo = SampleRepository(db_path)
+    project_repo = ProjectRepository(db_path)
+    storage = MinioStorageProvider(
+        endpoint=Config.MINIO_ENDPOINT,
+        access_key=Config.MINIO_ACCESS_KEY,
+        secret_key=Config.MINIO_SECRET_KEY,
+        bucket_name=Config.MINIO_BUCKET_NAME,
+        secure=Config.MINIO_SECURE
+    )
+    return UploadService(sample_repo, project_repo, storage)
 
 
 @router.post("/images")

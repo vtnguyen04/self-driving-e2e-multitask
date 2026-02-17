@@ -1,0 +1,16 @@
+# Ignore SQLite database
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Ignore all image data in these folders
+raw/*
+uploads/*
+exports/*
+train/*
+val/*
+test/*
+
+# But keep the folders themselves
+!.gitkeep

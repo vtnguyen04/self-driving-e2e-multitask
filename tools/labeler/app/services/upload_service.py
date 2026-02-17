@@ -21,14 +21,22 @@ from fastapi import UploadFile
 from app.core.config import Config
 from app.repositories.sample_repository import SampleRepository
 from app.repositories.project_repository import ProjectRepository
+from app.core.storage.storage_provider import StorageProvider
 
 
 class UploadService:
-    def __init__(self, db_path: str):
-        self.sample_repo = SampleRepository(db_path)
-        self.project_repo = ProjectRepository(db_path)
+    def __init__(
+        self, 
+        sample_repo: SampleRepository, 
+        project_repo: ProjectRepository, 
+        storage: StorageProvider
+    ):
+        self.sample_repo = sample_repo
+        self.project_repo = project_repo
+        self.storage = storage
+        
+        # Ensure temporary directories exist
         Config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        Config.RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     async def upload_images(self, files: List[UploadFile], project_id: int) -> dict:
         """Upload multiple images to a project."""
@@ -43,15 +51,14 @@ class UploadService:
 
             # Generate unique filename
             unique_name = f"{uuid.uuid4().hex[:8]}_{file.filename}"
-            target_path = Config.RAW_DIR / unique_name
-
-            # Save file
-            target_path.write_bytes(content)
+            
+            # Save to MinIO
+            storage_uri = self.storage.save_file(content, unique_name)
 
             # Create sample in database
             self.sample_repo.add_sample(
                 filename=unique_name,
-                image_path=f"raw/{unique_name}",
+                image_path=storage_uri,
                 project_id=project_id
             )
 
@@ -102,15 +109,18 @@ class UploadService:
                     video_base = Path(file.filename).stem
                     frame_name = f"{video_base}_frame_{frame_idx:06d}.jpg"
                     unique_name = f"{uuid.uuid4().hex[:8]}_{frame_name}"
-                    target_path = Config.RAW_DIR / unique_name
+                    
+                    # Encode frame to memory
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    frame_bytes = buffer.tobytes()
 
-                    # Save frame
-                    cv2.imwrite(str(target_path), frame)
+                    # Save to MinIO
+                    storage_uri = self.storage.save_file(frame_bytes, unique_name)
 
                     # Create sample in database
                     self.sample_repo.add_sample(
                         filename=unique_name,
-                        image_path=f"raw/{unique_name}",
+                        image_path=storage_uri,
                         project_id=project_id
                     )
 
@@ -150,15 +160,17 @@ class UploadService:
                 if img_path.is_file() and img_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.bmp']:
                     # Generate unique filename
                     unique_name = f"{uuid.uuid4().hex[:8]}_{img_path.name}"
-                    target_path = Config.RAW_DIR / unique_name
+                    
+                    # Read file
+                    img_content = img_path.read_bytes()
 
-                    # Copy file
-                    shutil.copy2(img_path, target_path)
+                    # Save to MinIO
+                    storage_uri = self.storage.save_file(img_content, unique_name)
 
                     # Create sample
                     self.sample_repo.add_sample(
                         filename=unique_name,
-                        image_path=f"raw/{unique_name}",
+                        image_path=storage_uri,
                         project_id=project_id
                     )
 
@@ -219,10 +231,12 @@ class UploadService:
 
                     # Generate unique filename
                     unique_name = f"{uuid.uuid4().hex[:8]}_{img_path.name}"
-                    target_img = Config.RAW_DIR / unique_name
+                    
+                    # Read image
+                    img_content = img_path.read_bytes()
 
-                    # Copy image
-                    shutil.copy2(img_path, target_img)
+                    # Save to MinIO
+                    storage_uri = self.storage.save_file(img_content, unique_name)
 
                     # Initialize label data for THIS image
                     bboxes = []
@@ -258,7 +272,7 @@ class UploadService:
                     # Create sample first
                     self.sample_repo.add_sample(
                         filename=unique_name,
-                        image_path=f"raw/{unique_name}",
+                        image_path=storage_uri,
                         project_id=project_id
                     )
 
