@@ -1,6 +1,23 @@
 # Ignore root data directory
 /data/
 
+# --- Ignore all images and binaries project-wide ---
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.ico
+*.mp4
+*.avi
+*.mov
+*.weights
+*.onnx
+*.engine
+*.trt
+
 # --- Exceptions ---
 # Un-ignore the neuro_pilot/data python module
 !/neuro_pilot/data/
