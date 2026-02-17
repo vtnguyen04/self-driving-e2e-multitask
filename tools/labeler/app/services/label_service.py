@@ -1,95 +1,185 @@
-from typing import List, Optional
-from ..repositories.label_repository import LabelRepository
-from ..schemas.label import LabelUpdate
-from ..core.config import Config
 import os
+import json
 from pathlib import Path
+from typing import List, Optional
+from ..repositories.project_repository import ProjectRepository
+from ..repositories.sample_repository import SampleRepository
+from ..core.config import Config
+from neuro_pilot.data.utils import save_yolo_label
 
 class LabelService:
-    def __init__(self, repository: LabelRepository):
-        self.repository = repository
+    def __init__(self, sample_repo: SampleRepository, project_repo: ProjectRepository):
+        self.sample_repo = sample_repo
+        self.project_repo = project_repo
 
-    def get_samples(self, limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None, split: Optional[str] = None, project_id: Optional[int] = None, class_id: Optional[int] = None):
-        return self.repository.get_all_samples(limit, offset, is_labeled, split, project_id, class_id)
+    @property
+    def repository(self):
+        """Compatibility property for legacy callers."""
+        return self.sample_repo
+
+    def get_projects(self):
+        return self.project_repo.get_projects()
+
+    def get_stats(self, project_id: Optional[int] = None):
+        return self.sample_repo.get_stats(project_id)
+
+    def get_samples(self, limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None,
+                    split: Optional[str] = None, project_id: Optional[int] = None,
+                    class_id: Optional[int] = None):
+        samples = self.sample_repo.get_all_samples(limit, offset, is_labeled, split, project_id, class_id)
+        for s in samples:
+            if s.get('data'):
+                try:
+                    data = json.loads(s['data']) if isinstance(s['data'], str) else s['data']
+                    s['data'] = self._heal_data(data)
+                except:
+                    pass
+        return samples
+
+
+    def _heal_data(self, data: dict) -> dict:
+        """Force-convert legacy data formats to modern object-based format."""
+        # 1. BBoxes Conversion
+        bboxes = data.get('bboxes', [])
+        categories = data.get('categories', [])
+        healed_bboxes = []
+
+        if bboxes and len(bboxes) > 0:
+            for i, b in enumerate(bboxes):
+                if isinstance(b, dict):
+                    # Already modern format
+                    healed_bboxes.append(b)
+                elif isinstance(b, (list, tuple)) and len(b) >= 4:
+                    # Legacy list format [cx, cy, w, h]
+                    cat = categories[i] if categories and i < len(categories) else 0
+                    healed_bboxes.append({
+                        "cx": b[0], "cy": b[1], "w": b[2], "h": b[3],
+                        "category": cat,
+                        "id": f"heal_{i}"
+                    })
+        data['bboxes'] = healed_bboxes
+
+        # 2. Waypoints Conversion
+        waypoints = data.get('waypoints', [])
+        healed_waypoints = []
+        if waypoints:
+            for w in waypoints:
+                if isinstance(w, dict):
+                    healed_waypoints.append(w)
+                elif isinstance(w, (list, tuple)) and len(w) >= 2:
+                    healed_waypoints.append({"x": w[0], "y": w[1]})
+        data['waypoints'] = healed_waypoints
+
+        # 3. Control Points Conversion
+        cp = data.get('control_points', [])
+        healed_cp = []
+        if cp:
+            for p in cp:
+                if isinstance(p, dict):
+                    healed_cp.append(p)
+                elif isinstance(p, (list, tuple)) and len(p) >= 2:
+                    healed_cp.append({"x": p[0], "y": p[1]})
+        data['control_points'] = healed_cp
+
+        return data
 
     def get_sample_detail(self, filename: str):
-        label = self.repository.get_label(filename)
-        return label
+        row = self.sample_repo.get_sample(filename)
+        if not row:
+            return None
 
-    def update_label(self, filename: str, update: LabelUpdate):
+        data_raw = row['data']
+        data = json.loads(data_raw) if data_raw else {"bboxes":[], "waypoints":[], "command":0}
+
+        # Heal on read
+        data = self._heal_data(data)
+
+        return {
+            "filename": filename,
+            "is_labeled": row['is_labeled'],
+            "updated_at": row['updated_at'],
+            **data
+        }
+
+    def update_label(self, filename: str, update):
+        # Using model_dump() for Pydantic v2 compatibility
         label_data = {
-            "bboxes": [b.dict() for b in update.bboxes],
-            "waypoints": [w.dict() for w in update.waypoints],
-            "control_points": [cp.dict() for cp in update.control_points] if update.control_points else [],
+            "bboxes": [b.model_dump() for b in update.bboxes],
+            "waypoints": [w.model_dump() for w in update.waypoints],
+            "control_points": [cp.model_dump() for cp in update.control_points] if hasattr(update, 'control_points') else [],
             "command": update.command
         }
-        self.repository.save_label(filename, label_data)
 
-        # 2. Export Standard YOLO Format for real-time sync
-        try:
-            from neuro_pilot.data.utils import save_yolo_label
+        # 1. Save to SQLite
+        self.sample_repo.save_label(filename, label_data)
+
+        # 2. Export to YOLO format (NeuroPilot standard)
+        sample = self.sample_repo.get_sample(filename)
+        if sample:
+            project_id = sample['project_id']
+            classes = self.project_repo.get_classes(project_id)
+
             label_dir = Config.DATA_DIR / "labels"
             label_dir.mkdir(parents=True, exist_ok=True)
 
-            yolo_label_path = label_dir / (Path(filename).stem + ".txt")
-            
-            cls = [b.category for b in update.bboxes]
-            bboxes = [[b.cx, b.cy, b.w, b.h] for b in update.bboxes]
-            keypoints = [[] for _ in update.bboxes]
-
-            # Add Trajectory as special class 98
-            if update.waypoints:
-                cls.append(98)
-                bboxes.append([0.5, 0.5, 1.0, 1.0]) # Global context bbox
-                flat_wps = []
-                for wp in update.waypoints:
-                    flat_wps.extend([wp.x, wp.y])
-                keypoints.append(flat_wps)
-
+            yolo_path = label_dir / (Path(filename).stem + ".txt")
             save_yolo_label(
-                yolo_label_path,
-                cls=cls,
-                bboxes=bboxes,
-                keypoints=keypoints,
+                yolo_path,
+                cls=[b.category for b in update.bboxes],
+                bboxes=[[b.cx, b.cy, b.w, b.h] for b in update.bboxes],
+                keypoints=[[w.x, w.y] for w in update.waypoints],
                 command=update.command
             )
-        except Exception as e:
-            print(f"Warning: Failed to export YOLO label for {filename}: {e}")
 
-        return {"status": "success"}
-
-    def reset_label(self, filename: str):
-        self.repository.reset_label(filename)
-        return {"status": "reset"}
-
-    def duplicate_sample(self, filename: str, new_filename: str):
-        self.repository.duplicate_sample(filename, new_filename)
-        return {"status": "duplicated", "new_filename": new_filename}
+        return {"status": "success", "image": filename}
 
     def delete_sample(self, filename: str):
-        self.repository.delete_sample(filename)
-        return {"status": "deleted"}
+        sample = self.sample_repo.get_sample(filename)
+        if not sample:
+            return {"status": "error", "message": "Sample not found"}
 
-    def get_stats(self, project_id: Optional[int] = None):
-        return self.repository.get_stats(project_id)
+        image_path = sample['image_path']
 
-    def get_projects(self):
-        return self.repository.get_projects()
+        # 1. Delete from DB
+        self.sample_repo.delete_sample(filename)
 
-    def get_versions(self, project_id: int):
-        return self.repository.get_versions(project_id)
+        # 2. Feature Parity: Delete physical file if it is orphaned
+        # (meaning no other sample entry references the same image_path)
+        ref_count = self.sample_repo.count_references_to_path(image_path)
+        deleted_file = False
+        if ref_count == 0:
+            try:
+                p = Path(image_path)
+                if p.exists() and p.is_file():
+                    os.remove(p)
+                    deleted_file = True
+            except Exception as e:
+                print(f"Warning: Failed to delete physical file {image_path}: {e}")
 
-    def publish_new_version(self, project_id: int, version_name: str, export_service):
-        samples = self.repository.get_all_samples(limit=100000, project_id=project_id) # Get all for export
-        classes = self.repository.get_classes(project_id)
-        path, count = export_service.publish_version(version_name, samples, classes)
+        # 3. Clean up sidecar JSON if it exists in processed
+        try:
+            json_path = Config.PROCESSED_DIR / (Path(filename).stem + ".json")
+            if json_path.exists():
+                os.remove(json_path)
+        except Exception:
+            pass
 
-        with self.repository._get_connection() as conn:
-            # Get latest version number
-            last = conn.execute("SELECT MAX(version_number) FROM dataset_versions WHERE project_id = ?", (project_id,)).fetchone()[0] or 0
-            conn.execute(
-                "INSERT INTO dataset_versions (project_id, version_number, export_path, sample_count) VALUES (?, ?, ?, ?)",
-                (project_id, last + 1, path, count)
-            )
-            conn.commit()
-        return {"version": last + 1, "path": path, "count": count}
+        return {"status": "deleted", "physical_file_removed": deleted_file}
+
+    def reset_label(self, filename: str):
+        self.sample_repo.reset_label(filename)
+        return {"status": "success", "image": filename}
+
+    def duplicate_sample(self, filename: str, new_filename: str):
+        self.sample_repo.duplicate_sample(filename, new_filename)
+        return {"status": "success", "new_image": new_filename}
+
+    def create_project(self, name: str, description: str = None, classes: List[str] = None):
+        return self.project_repo.create_project(name, description, classes)
+
+    def delete_project(self, project_id: int):
+        self.sample_repo.delete_by_project(project_id)
+        return self.project_repo.delete_project(project_id)
+
+    def add_sample(self, filename: str, image_path: str, project_id: int):
+        return self.sample_repo.add_sample(filename, image_path, project_id)

@@ -37,10 +37,14 @@ class VersionBase(BaseModel):
     description: Optional[str] = None
 
 class VersionCreate(VersionBase):
-    pass
+    project_id: int
+    train_ratio: float = 0.8
+    val_ratio: float = 0.1
+    test_ratio: float = 0.1
 
 class VersionRead(VersionBase):
     id: int
+    project_id: int
     created_at: datetime
     sample_count: int
     path: str
