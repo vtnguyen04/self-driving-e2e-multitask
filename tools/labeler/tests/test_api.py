@@ -1,9 +1,5 @@
-import pytest
 from fastapi.testclient import TestClient
 from tools.labeler.app.main import app
-from tools.labeler.app.core.config import Config
-import sqlite3
-import os
 
 client = TestClient(app)
 
