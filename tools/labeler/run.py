@@ -2,7 +2,6 @@ import uvicorn
 import sys
 from pathlib import Path
 
-# Add the project root and tools/labeler to sys.path
 root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(root))
 sys.path.append(str(Path(__file__).parent.resolve()))
