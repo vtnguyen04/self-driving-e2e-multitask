@@ -7,3 +7,12 @@ experiments/
 .DS_Store
 ultralytics/
 *.log
+data/
+!/tools/labeler/data/
+/tools/labeler/data/*
+!/tools/labeler/data/minio_data/
+tools/labeler/exports/
+tools/labeler/labels.db
+*.db
+/.mypy_cache
+/.ruff_cache
