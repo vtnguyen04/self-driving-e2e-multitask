@@ -25,9 +25,27 @@ export interface Sample {
 
 export interface Version {
   id: number;
+  project_id: number;
   name: string;
   description?: string;
   created_at: string;
   sample_count: number;
   path: string;
+}
+
+export interface Project {
+  id: number;
+  name: string;
+  description?: string;
+  classes: string[];
+  created_at: string;
+}
+
+export interface Stats {
+  raw: number;
+  train: number;
+  val: number;
+  test: number;
+  labeled: number;
+  total: number;
 }

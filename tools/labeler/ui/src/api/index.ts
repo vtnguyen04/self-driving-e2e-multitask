@@ -1,4 +1,4 @@
-import { BBox, Sample, Version, Waypoint } from '../types';
+import { BBox, Project, Sample, Version, Waypoint } from '../types';
 
 const BASE_URL = '/api/v1';
 
@@ -35,16 +35,30 @@ export const API = {
       for (let i = 0; i < files.length; i++) {
         formData.append('files', files[i]);
       }
-      return fetchJSON(`/labels/projects/${projectId}/upload`, { method: 'POST', body: formData, headers: {} }); // Let browser set Content-Type for boundary
+      return fetchJSON(`/labels/projects/${projectId}/upload`, { method: 'POST', body: formData });
     },
-    getProjects: () => fetchJSON<any[]>('/labels/projects'),
+    getProjects: () => fetchJSON<Project[]>('/labels/projects'),
+    createProject: (name: string, description: string = "New Dataset Project", classes: string[] = []) =>
+      fetchJSON<number>('/labels/projects', {
+        method: 'POST',
+        body: JSON.stringify({ name, description, classes })
+      }),
     deleteProject: (projectId: number) => fetchJSON(`/labels/projects/${projectId}`, { method: 'DELETE' }),
     getClasses: (projectId: number) => fetchJSON<string[]>(`/labels/projects/${projectId}/classes`),
     updateClasses: (projectId: number, classes: string[]) => fetchJSON(`/labels/projects/${projectId}/classes`, { method: 'POST', body: JSON.stringify(classes) }),
-    getVersions: (projectId: number) => fetchJSON<any[]>(`/labels/projects/${projectId}/versions`),
-    publish: (projectId: number, versionName: string) => fetchJSON(`/labels/projects/${projectId}/publish?version_name=${versionName}`, { method: 'POST' }),
+
+    // Updated Versions API (Consolidated)
+    getVersions: (projectId: number) => fetchJSON<Version[]>(`/versions/?project_id=${projectId}`),
+    publish: (projectId: number, name: string, train: number = 0.8, val: number = 0.1, test: number = 0.1) =>
+      fetchJSON('/versions/', {
+          method: 'POST',
+          body: JSON.stringify({ project_id: projectId, name, train_ratio: train, val_ratio: val, test_ratio: test })
+      }),
+    deleteVersion: (versionId: number) => fetchJSON(`/versions/${versionId}`, { method: 'DELETE' }),
+    downloadVersion: (versionId: number) => `${BASE_URL}/versions/${versionId}/download`,
+
     get: (filename: string) => fetchJSON<Sample>(`/labels/${filename}`),
-    save: (filename: string, data: { bboxes: BBox[]; waypoints: Waypoint[]; command: number }) =>
+    save: (filename: string, data: { bboxes: BBox[]; waypoints: Waypoint[]; command: number, control_points?: Waypoint[] }) =>
       fetchJSON(`/labels/${filename}`, {
         method: 'POST',
         body: JSON.stringify(data),
@@ -61,13 +75,5 @@ export const API = {
       fetchJSON(`/labels/${filename}/duplicate?new_filename=${newFilename}`, {
         method: 'POST',
       }),
-  },
-  versions: {
-    list: () => fetchJSON<Version[]>('/versions/'),
-    publish: (name: string, description: string) =>
-      fetchJSON<Version>('/versions/', {
-        method: 'POST',
-        body: JSON.stringify({ name, description }),
-      }),
-  },
+  }
 };
