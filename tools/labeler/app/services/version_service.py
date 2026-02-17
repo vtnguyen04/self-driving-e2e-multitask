@@ -9,7 +9,7 @@ from ..repositories.version_repository import VersionRepository
 from ..repositories.sample_repository import SampleRepository
 from ..repositories.project_repository import ProjectRepository
 from ..core.config import Config
-from neuro_pilot.data.utils import save_yolo_label
+from ..utils.yolo_utils import save_yolo_label
 
 class VersionService:
     def __init__(self, version_repo: VersionRepository, sample_repo: SampleRepository, project_repo: ProjectRepository):
@@ -145,7 +145,7 @@ class VersionService:
                         f.write(data_bytes)
                 except Exception as e:
                     print(f"Error downloading from MinIO {img_path}: {e}")
-                    return False
+                    return None  # Skip this sample
             else:
                 src_img = self._find_image(filename, img_path)
                 if src_img:
@@ -154,9 +154,10 @@ class VersionService:
                         shutil.copy2(src_img, dest_img)
                     except Exception as e:
                         print(f"Error copying image {filename}: {e}")
-                        return False
+                        return None  # Skip this sample
                 else:
-                    return False
+                    print(f"Warning: Image not found for {filename}, skipping...")
+                    return None  # Skip this sample
 
             # Prepare data for save_yolo_label
             cat_list = []
@@ -240,8 +241,19 @@ class VersionService:
         if hint_path and os.path.exists(hint_path):
             return Path(hint_path)
         for d in [Config.RAW_DIR, Config.TRAIN_DIR, Config.VAL_DIR, Config.TEST_DIR]:
-            # Config.TRAIN_DIR etc are already project_root/data/.../images
+            # Exact match
             p = d / filename
             if p.exists():
                 return p
+        # Fuzzy match: search for files ending with filename (handles UUID prefix)
+        for d in [Config.RAW_DIR, Config.TRAIN_DIR, Config.VAL_DIR, Config.TEST_DIR]:
+            if d.exists():
+                matches = list(d.glob(f"*_{filename}"))
+                if matches:
+                    return matches[0]
+        # Legacy images directory (video uploads stored in subdirectories)
+        if Config.LEGACY_IMAGES_DIR.exists():
+            matches = list(Config.LEGACY_IMAGES_DIR.rglob(filename))
+            if matches:
+                return matches[0]
         return None

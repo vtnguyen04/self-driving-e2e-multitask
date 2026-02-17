@@ -106,7 +106,7 @@ const ProjectCard = ({ title, type, images, models, updated, active, onClick, on
     >
         <button
             onClick={(e) => { e.stopPropagation(); onDelete(e); }}
-            className="absolute top-4 right-4 p-2 text-white/10 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-20"
+            className="absolute top-4 right-4 p-2 text-red-400/60 hover:text-red-500 hover:bg-red-500/20 rounded-lg transition-all z-20 border border-red-500/20 hover:border-red-500/40"
         >
             <Trash2 className="w-4 h-4" />
         </button>

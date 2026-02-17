@@ -5,7 +5,7 @@ from typing import List, Optional
 from ..repositories.project_repository import ProjectRepository
 from ..repositories.sample_repository import SampleRepository
 from ..core.config import Config
-from neuro_pilot.data.utils import save_yolo_label
+from ..utils.yolo_utils import save_yolo_label
 
 class LabelService:
     def __init__(self, sample_repo: SampleRepository, project_repo: ProjectRepository):
@@ -183,3 +183,59 @@ class LabelService:
 
     def add_sample(self, filename: str, image_path: str, project_id: int):
         return self.sample_repo.add_sample(filename, image_path, project_id)
+
+    def delete_batch(self, filenames: List[str]) -> dict:
+        """
+        Delete multiple samples at once (bulk delete).
+
+        Args:
+            filenames: List of filenames to delete
+
+        Returns:
+            dict with deletion statistics
+        """
+        deleted_count = 0
+        files_removed = 0
+        errors = []
+
+        for filename in filenames:
+            try:
+                sample = self.sample_repo.get_sample(filename)
+                if not sample:
+                    errors.append(f"{filename}: not found")
+                    continue
+
+                image_path = sample['image_path']
+
+                # Delete from DB
+                self.sample_repo.delete_sample(filename)
+                deleted_count += 1
+
+                # Delete physical file if orphaned
+                ref_count = self.sample_repo.count_references_to_path(image_path)
+                if ref_count == 0:
+                    try:
+                        p = Path(image_path)
+                        if p.exists() and p.is_file():
+                            os.remove(p)
+                            files_removed += 1
+                    except Exception as e:
+                        errors.append(f"{filename}: failed to delete file - {e}")
+
+                # Clean up sidecar JSON
+                try:
+                    json_path = Config.DATA_DIR / "processed" / (Path(filename).stem + ".json")
+                    if json_path.exists():
+                        os.remove(json_path)
+                except Exception:
+                    pass
+
+            except Exception as e:
+                errors.append(f"{filename}: {str(e)}")
+
+        return {
+            "status": "success",
+            "deleted_count": deleted_count,
+            "files_removed": files_removed,
+            "errors": errors if errors else None
+        }

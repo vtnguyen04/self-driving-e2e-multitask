@@ -108,6 +108,23 @@ async def get_image(filename: str, service: LabelService = Depends(get_label_ser
                 logger.info(f"Serving {filename} from search dir: {p}")
                 return FileResponse(p)
 
+    # 4. Fuzzy match: search for files ending with the requested filename (handles UUID prefix)
+    for d in search_dirs:
+        if d.exists():
+            for name in [filename, base_filename]:
+                matches = list(d.glob(f"*_{name}"))
+                if matches:
+                    logger.info(f"Serving {filename} via fuzzy match: {matches[0]}")
+                    return FileResponse(matches[0])
+
+    # 5. Search in legacy images directory (video uploads stored in subdirectories)
+    if Config.LEGACY_IMAGES_DIR.exists():
+        for name in [filename, base_filename]:
+            matches = list(Config.LEGACY_IMAGES_DIR.rglob(name))
+            if matches:
+                logger.info(f"Serving {filename} from legacy images: {matches[0]}")
+                return FileResponse(matches[0])
+
     raise HTTPException(status_code=404, detail="Image resource not found. Ensure file exists in MinIO or local data folders.")
 
 # --- PROJECT SUB-ROUTES ---
@@ -124,20 +141,6 @@ def get_classes(project_id: int, service: LabelService = Depends(get_label_servi
 def update_classes(project_id: int, classes: List[str], service: LabelService = Depends(get_label_service)):
     return service.project_repo.update_classes(project_id, classes)
 
-@router.post("/projects/{project_id}/upload")
-async def upload_data(project_id: int, files: List[UploadFile] = File(...), service: LabelService = Depends(get_label_service)):
-    # Lazy import storage
-    from ..core.storage.storage_provider import MinioStorageProvider
-    storage = MinioStorageProvider(
-        endpoint=Config.MINIO_ENDPOINT,
-        access_key=Config.MINIO_ACCESS_KEY,
-        secret_key=Config.MINIO_SECRET_KEY,
-        bucket_name=Config.MINIO_BUCKET_NAME,
-        secure=Config.MINIO_SECURE
-    )
-    from ..services.upload_service import UploadService
-    uploader = UploadService(service, storage)
-    return await uploader.handle_upload(project_id, files)
 
 # --- DYNAMIC FILENAME ROUTES ---
 
@@ -163,3 +166,8 @@ def reset_label(filename: str, service: LabelService = Depends(get_label_service
 @router.post("/{filename}/duplicate")
 def duplicate_label(filename: str, new_filename: str, service: LabelService = Depends(get_label_service)):
     return service.duplicate_sample(filename, new_filename)
+
+@router.delete("/batch")
+def delete_batch(filenames: List[str], service: LabelService = Depends(get_label_service)):
+    """Delete multiple samples at once (bulk delete)."""
+    return service.delete_batch(filenames)
