@@ -1,6 +1,4 @@
 from abc import ABC, abstractmethod
-from pathlib import Path
-from minio import Minio
 import io
 
 class StorageProvider(ABC):
@@ -14,8 +12,18 @@ class StorageProvider(ABC):
         """Returns a URL or path to access the file."""
         pass
 
+    @abstractmethod
+    def file_exists(self, filename: str) -> bool:
+        """Checks if file exists in storage."""
+        pass
+
 class MinioStorageProvider(StorageProvider):
     def __init__(self, endpoint: str, access_key: str, secret_key: str, bucket_name: str, secure: bool = False):
+        try:
+            from minio import Minio
+        except ImportError:
+            raise ImportError("The 'minio' library is required for MinioStorageProvider. Install it with 'pip install minio'.")
+
         self.client = Minio(
             endpoint,
             access_key=access_key,
@@ -47,6 +55,13 @@ class MinioStorageProvider(StorageProvider):
             self.bucket_name,
             filename
         )
+
+    def file_exists(self, filename: str) -> bool:
+        try:
+            self.client.stat_object(self.bucket_name, filename)
+            return True
+        except Exception:
+            return False
 
     def get_object(self, filename: str):
         """Returns the raw bytes from MinIO."""
