@@ -1,10 +1,10 @@
 import random
 import pytest
-from tools.labeler.app.repositories.version_repository import VersionRepository
-from tools.labeler.app.repositories.sample_repository import SampleRepository
-from tools.labeler.app.repositories.project_repository import ProjectRepository
-from tools.labeler.app.services.version_service import VersionService
-from tools.labeler.app.core.config import Config
+from app.repositories.version_repository import VersionRepository
+from app.repositories.sample_repository import SampleRepository
+from app.repositories.project_repository import ProjectRepository
+from app.services.version_service import VersionService
+from app.core.config import Config
 
 def test_publish_version():
     """Test publishing a new version of the dataset."""

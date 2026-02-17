@@ -1,12 +1,13 @@
 from fastapi.testclient import TestClient
-from tools.labeler.app.main import app
+from app.main import app
 
 client = TestClient(app)
 
 def test_read_root():
     response = client.get("/")
     assert response.status_code == 200
-    assert "Welcome to NeuroPilot Labeler Pro" in response.json()["message"]
+    # Frontend is served, so we get HTML
+    assert "<!doctype html>" in response.text.lower()
 
 def test_list_labels():
     response = client.get("/api/v1/labels/")

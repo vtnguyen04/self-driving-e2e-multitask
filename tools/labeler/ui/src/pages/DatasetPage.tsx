@@ -1,8 +1,9 @@
-import { ArrowUpRight, BarChart3, CheckCircle2, Search } from 'lucide-react';
+import { ArrowUpRight, BarChart3, CheckCircle2, Search, Trash2, Upload } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { API } from '../api';
 import { MainLayout } from '../components/layout/MainLayout';
+import { UploadModal } from '../components/UploadModal';
 import { BBox, Sample, Stats, Waypoint } from '../types';
 
 const COLORS = [
@@ -114,6 +115,9 @@ export const DatasetPage: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'labeled' | 'unlabeled'>('all');
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
   const LIMIT = 48;
 
   const loadData = useCallback(async (isLoadMore = false) => {
@@ -169,9 +173,34 @@ export const DatasetPage: React.FC = () => {
                 </h1>
                 <p className="text-white text-base font-bold font-mono uppercase tracking-[0.15em]">Project Integrity: High-Performance</p>
             </div>
-            <button onClick={() => navigate(`/annotate/${projectId}`)} className="px-8 py-3 bg-accent text-black font-bold rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(0,255,65,0.2)] flex items-center gap-2 uppercase text-xs">
-                Annotate New Data <ArrowUpRight className="w-4 h-4" />
-            </button>
+            <div className="flex gap-4">
+                <button
+                    onClick={async () => {
+                        if (!confirm(`⚠️ DELETE PROJECT?\n\nThis will permanently delete ALL samples and data.\n\nType 'DELETE' to confirm.`)) return;
+                        const userInput = prompt('Type DELETE to confirm:');
+                        if (userInput !== 'DELETE') {
+                            alert('Deletion cancelled');
+                            return;
+                        }
+                        try {
+                            await fetch(`/api/v1/labels/projects/${projectId}`, { method: 'DELETE' });
+                            navigate('/');
+                        } catch (error) {
+                            console.error('Delete project failed:', error);
+                            alert('Failed to delete project');
+                        }
+                    }}
+                    className="px-6 py-3 bg-red-500/10 text-red-400 font-bold rounded-2xl hover:scale-105 transition-all border-2 border-red-500/30 hover:border-red-500/60 flex items-center gap-2 uppercase text-xs"
+                >
+                    <Trash2 className="w-4 h-4" /> Delete Project
+                </button>
+                <button onClick={() => setShowUploadModal(true)} className="px-8 py-3 bg-white/10 text-white font-bold rounded-2xl hover:scale-105 transition-all border-2 border-white/20 flex items-center gap-2 uppercase text-xs">
+                    <Upload className="w-4 h-4" /> Upload Data
+                </button>
+                <button onClick={() => navigate(`/annotate/${projectId}`)} className="px-8 py-3 bg-accent text-black font-bold rounded-2xl hover:scale-105 transition-all shadow-[0_0_30px_rgba(0,255,65,0.2)] flex items-center gap-2 uppercase text-xs">
+                    Annotate New Data <ArrowUpRight className="w-4 h-4" />
+                </button>
+            </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -209,6 +238,41 @@ export const DatasetPage: React.FC = () => {
                     <Search className="w-6 h-6 text-accent" /> Resource Browser
                 </h2>
                 <div className="flex gap-3">
+                    {bulkMode && selectedFiles.size > 0 && (
+                        <button
+                            onClick={async () => {
+                                if (!confirm(`Delete ${selectedFiles.size} selected files?`)) return;
+                                try {
+                                    await fetch('/api/v1/labels/batch', {
+                                        method: 'DELETE',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(Array.from(selectedFiles))
+                                    });
+                                    setSelectedFiles(new Set());
+                                    setBulkMode(false);
+                                    loadData(false);
+                                } catch (error) {
+                                    console.error('Bulk delete failed:', error);
+                                }
+                            }}
+                            className="px-6 py-2 bg-red-500/20 text-red-400 border-2 border-red-500/40 font-bold rounded-xl hover:bg-red-500/30 transition-all flex items-center gap-2 text-sm uppercase"
+                        >
+                            <Trash2 className="w-4 h-4" /> Delete ({selectedFiles.size})
+                        </button>
+                    )}
+                    <button
+                        onClick={() => {
+                            setBulkMode(!bulkMode);
+                            setSelectedFiles(new Set());
+                        }}
+                        className={`px-6 py-2 font-bold rounded-xl transition-all text-sm uppercase ${
+                            bulkMode
+                                ? 'bg-accent/20 text-accent border-2 border-accent'
+                                : 'bg-white/10 text-white border-2 border-white/20 hover:border-white/40'
+                        }`}
+                    >
+                        {bulkMode ? 'Cancel Selection' : 'Select Multiple'}
+                    </button>
                     <select
                         className="bg-[#1a1a1c] border-2 border-white/30 text-white text-base font-black rounded-xl px-6 py-3 outline-none hover:border-accent transition-colors"
                         value={filterStatus}
@@ -229,9 +293,41 @@ export const DatasetPage: React.FC = () => {
                 </div>
             </div>
 
+
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {samples.map((s) => (
-                    <div key={s.filename} onClick={() => navigate(`/annotate/${projectId}?file=${s.filename}`)} className="aspect-square bg-[#0a0a0c] border border-white/5 rounded-2xl overflow-hidden relative group cursor-pointer hover:border-accent/50 transition-all shadow-2xl">
+                    <div
+                        key={s.filename}
+                        onClick={(e) => {
+                            if (bulkMode) {
+                                e.stopPropagation();
+                                const newSelected = new Set(selectedFiles);
+                                if (newSelected.has(s.filename)) {
+                                    newSelected.delete(s.filename);
+                                } else {
+                                    newSelected.add(s.filename);
+                                }
+                                setSelectedFiles(newSelected);
+                            } else {
+                                navigate(`/annotate/${projectId}?file=${s.filename}`);
+                            }
+                        }}
+                        className={`aspect-square bg-[#0a0a0c] border rounded-2xl overflow-hidden relative group cursor-pointer transition-all shadow-2xl ${
+                            bulkMode && selectedFiles.has(s.filename)
+                                ? 'border-accent border-4 scale-95'
+                                : 'border-white/5 hover:border-accent/50'
+                        }`}
+                    >
+                        {bulkMode && (
+                            <div className="absolute top-3 left-3 z-10">
+                                <input
+                                    type="checkbox"
+                                    checked={selectedFiles.has(s.filename)}
+                                    onChange={() => {}}
+                                    className="w-6 h-6 accent-accent cursor-pointer"
+                                />
+                            </div>
+                        )}
                         <MiniPreview sample={s} />
                         {s.is_labeled && (
                             <div className="absolute top-3 right-3 bg-accent text-black p-1 rounded-lg shadow-lg">
@@ -268,6 +364,16 @@ export const DatasetPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      {showUploadModal && (
+        <UploadModal
+          projectId={projectId}
+          onClose={() => setShowUploadModal(false)}
+          onSuccess={() => {
+            loadData(false);
+          }}
+        />
+      )}
     </MainLayout>
   );
 };
