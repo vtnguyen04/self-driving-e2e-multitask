@@ -11,6 +11,7 @@ exports/*
 train/*
 val/*
 test/*
+minio_data/*
 
 # But keep the folders themselves
 !.gitkeep
