@@ -3,10 +3,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { API } from '../api';
 import { MainLayout } from '../components/layout/MainLayout';
+import { PublishModal } from '../components/PublishModal';
+import { Version } from '../types';
 
 export const VersionsPage: React.FC = () => {
-  const [versions, setVersions] = useState<any[]>([]);
+  const [versions, setVersions] = useState<Version[]>([]);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const { id } = useParams<{ id: string }>();
   const projectId = id ? parseInt(id) : 1;
@@ -19,19 +22,30 @@ export const VersionsPage: React.FC = () => {
     loadVersions();
   }, [loadVersions]);
 
-  const handlePublish = async () => {
-    const name = prompt("Enter version name (e.g. v1, final_run):");
-    if (!name) return;
-
+  const handlePublish = async (name: string, train: number, val: number, test: number) => {
     setIsPublishing(true);
     try {
-        await API.labels.publish(projectId, name);
+        await API.labels.publish(projectId, name, train, val, test);
         loadVersions();
-        alert("Physical Export Complete! Check the 'exports' directory.");
-    } catch (e) {
+        setIsModalOpen(false);
+        alert("Physical Export Complete! Check the 'data/versions' directory.");
+    } catch (error) {
+        console.error("Publishing failed:", error);
         alert("Publishing failed.");
     } finally {
         setIsPublishing(false);
+    }
+  };
+
+  const handleDelete = async (versionId: number) => {
+    if (!confirm("Are you sure you want to delete this version? All exported files will be removed.")) return;
+
+    try {
+        await API.labels.deleteVersion(versionId);
+        loadVersions();
+    } catch (error) {
+        console.error("Deletion failed:", error);
+        alert("Deletion failed.");
     }
   };
 
@@ -44,7 +58,7 @@ export const VersionsPage: React.FC = () => {
                 <p className="text-white/40">Snapshots of your dataset ready for training.</p>
             </div>
             <button
-                onClick={handlePublish}
+                onClick={() => setIsModalOpen(true)}
                 disabled={isPublishing}
                 className="bg-accent text-black px-6 py-2.5 rounded-lg font-bold flex items-center gap-2 hover:bg-white transition-all disabled:opacity-50"
             >
@@ -63,22 +77,25 @@ export const VersionsPage: React.FC = () => {
                     <div className="flex-1">
                         <div className="flex items-center gap-3 mb-1">
                             <h3 className="text-lg font-bold text-white">{v.name}</h3>
-                            <span className="text-[10px] px-2 py-0.5 bg-white/5 rounded border border-white/10 text-white/40 font-cyber">STRETCH TO 640x640</span>
+                            <span className="text-[10px] px-2 py-0.5 bg-white/5 rounded border border-white/10 text-white/40 font-cyber">YOLO FORMAT</span>
                         </div>
                         <div className="flex gap-6 text-xs text-white/40">
-                             <span className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> Jan 28, 2026</span>
-                             <span className="flex items-center gap-2"><Database className="w-3.5 h-3.5" /> {v.sample_count || 3912} Images</span>
+                             <span className="flex items-center gap-2"><Calendar className="w-3.5 h-3.5" /> {new Date(v.created_at).toLocaleDateString()}</span>
+                             <span className="flex items-center gap-2"><Database className="w-3.5 h-3.5" /> {v.sample_count} Images</span>
                         </div>
                     </div>
 
                     <div className="flex gap-2">
-                        <button
-                            onClick={() => window.open(`/api/v1/labels/projects/${projectId}/versions/${v.id}/download`)}
+                        <a
+                            href={API.labels.downloadVersion(v.id)}
                             className="p-3 bg-white/5 rounded-xl hover:bg-accent hover:text-black transition-all group-hover:scale-105"
                         >
                             <Download className="w-5 h-5" />
-                        </button>
-                        <button className="p-3 bg-white/5 rounded-xl hover:bg-red-500/20 hover:text-red-500 transition-all">
+                        </a>
+                        <button
+                            onClick={() => handleDelete(v.id)}
+                            className="p-3 bg-white/5 rounded-xl hover:bg-red-500/20 hover:text-red-500 transition-all"
+                        >
                             <Trash2 className="w-5 h-5" />
                         </button>
                     </div>
@@ -91,6 +108,13 @@ export const VersionsPage: React.FC = () => {
             )}
         </div>
       </div>
+
+      <PublishModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onPublish={handlePublish}
+        isPublishing={isPublishing}
+      />
     </MainLayout>
   );
 };

@@ -1,5 +1,5 @@
 import { clsx, type ClassValue } from 'clsx';
-import { BarChart2, BoxSelect, HelpCircle, History, Home, Layout, Settings } from 'lucide-react';
+import { BarChart2, BoxSelect, History, Home, Layout } from 'lucide-react';
 import React from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { twMerge } from 'tailwind-merge';
@@ -64,28 +64,13 @@ export const Sidebar: React.FC = () => {
         ))}
       </nav>
 
-      <div className="p-4 border-t border-white/5 space-y-1">
-        <NavItem icon={HelpCircle} label="Help & Docs" />
-        <NavItem icon={Settings} label="Settings" />
-
-        <div className="mt-4 p-4 rounded-xl bg-gradient-to-br from-accent/20 to-transparent border border-accent/20">
-            <p className="text-[10px] text-accent font-cyber mb-1">FREE PLAN</p>
-            <div className="h-1 bg-white/10 rounded-full overflow-hidden mb-2">
-                <div className="h-full bg-accent w-2/3" />
-            </div>
-            <p className="text-[9px] text-white/40">Workspace capacity: 67%</p>
-            <button className="w-full mt-3 py-2 bg-accent text-black text-[10px] font-bold rounded-lg hover:bg-white transition-colors">
-                UPGRADE
-            </button>
+      <div className="p-6 border-t border-white/5 opacity-20 pointer-events-none">
+        <div className="flex items-center gap-3 mb-2">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[10px] font-cyber tracking-widest text-white/40 uppercase">System Ready</span>
         </div>
+        <p className="text-[9px] text-white/20 font-mono">NEUROPILOT_OS v2.4.0-PRO</p>
       </div>
     </div>
   );
 };
-
-const NavItem = ({ icon: Icon, label }: { icon: any, label: string }) => (
-    <button className="w-full flex items-center gap-3 px-4 py-2 text-white/40 hover:text-white/80 transition-colors">
-        <Icon className="w-4 h-4" />
-        <span className="text-sm font-medium">{label}</span>
-    </button>
-)

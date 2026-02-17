@@ -3,28 +3,29 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { API } from '../api';
 import { MainLayout } from '../components/layout/MainLayout';
+import { Project } from '../types';
+
+function cn(...classes: (string | boolean | undefined)[]) {
+  return classes.filter(Boolean).join(' ');
+}
 
 export const ProjectsPage: React.FC = () => {
-  const [projects, setProjects] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const navigate = useNavigate();
 
   useEffect(() => {
     API.labels.getProjects().then(setProjects);
-    API.labels.getStats().then(setStats);
   }, []);
 
   const handleCreateProject = async () => {
     const name = prompt("Enter project name:");
     if (!name) return;
     try {
-        await fetch('/api/v1/labels/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description: "New Dataset Project" })
-        });
-        API.labels.getProjects().then(setProjects);
-    } catch (e) {
+        await API.labels.createProject(name);
+        const projs = await API.labels.getProjects();
+        setProjects(projs);
+    } catch (error) {
+        console.error("Creation failed:", error);
         alert("Creation failed.");
     }
   };
@@ -60,11 +61,11 @@ export const ProjectsPage: React.FC = () => {
                     key={proj.id}
                     title={proj.name}
                     type="Object Detection"
-                    images={stats?.total || 0}
+                    images={0} // Default to 0, actual count would need backend support per project
                     models={0}
                     updated="Just now"
                     onClick={() => navigate(`/dataset/${proj.id}`)}
-                    onDelete={(e: any) => {
+                    onDelete={(e: React.MouseEvent) => {
                         e.stopPropagation();
                         if (confirm(`Delete project "${proj.name}"? This will remove all associated labels.`)) {
                             API.labels.deleteProject(proj.id).then(() => {
@@ -84,7 +85,18 @@ export const ProjectsPage: React.FC = () => {
   );
 };
 
-const ProjectCard = ({ title, type, images, models, updated, active, onClick, onDelete }: any) => (
+interface ProjectCardProps {
+    title: string;
+    type: string;
+    images: number;
+    models: number;
+    updated: string;
+    active?: boolean;
+    onClick: () => void;
+    onDelete: (e: React.MouseEvent) => void;
+}
+
+const ProjectCard = ({ title, type, images, models, updated, active, onClick, onDelete }: ProjectCardProps) => (
     <div
         onClick={onClick}
         className={cn(
@@ -94,7 +106,7 @@ const ProjectCard = ({ title, type, images, models, updated, active, onClick, on
     >
         <button
             onClick={(e) => { e.stopPropagation(); onDelete(e); }}
-            className="absolute top-4 right-4 p-2 text-white/10 hover:text-neon-red hover:bg-neon-red/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-20"
+            className="absolute top-4 right-4 p-2 text-white/10 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all opacity-0 group-hover:opacity-100 z-20"
         >
             <Trash2 className="w-4 h-4" />
         </button>
@@ -122,5 +134,3 @@ const ProjectCard = ({ title, type, images, models, updated, active, onClick, on
         </div>
     </div>
 )
-
-const cn = (...classes: any) => classes.filter(Boolean).join(' ');
