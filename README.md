@@ -58,21 +58,54 @@ Configurations are managed via YAML files in `neuro_pilot/cfg/`.
 
 ## 📂 Project Structure
 
-```
+```text
 neuro_pilot/
-├── engine/             # Core Logic
-│   ├── composite.py    # Dynamic Task Composition Engine
-│   ├── trainer.py      # Ultralytics-style Trainer
-│   ├── validator.py    # Flexible Validator
-│   └── task.py         # Task Registry & Base Classes
-├── models/             # Neural Network Architectures
-│   ├── modules.py      # Atomic Heads & Backbone
-│   └── net.py          # Legacy MultiTask Net
-├── tasks/              # Atomic Task Implementations
-│   ├── atomic.py       # Trajectory & Heatmap Tasks
-│   └── detection.py    # Detection Task
-└── utils/              # Utilities (Losses, Metrics, Logging)
+├── cfg/                # Model and Hyperparameter configurations
+├── core/               # Registry and core system logic
+├── data/               # Dataset logic (DatasetV2, Augmentations)
+├── deploy/             # ONNX/TensorRT Export and Deployment logic
+├── engine/             # Core Training/Inference Engine (Trainer, Predictor)
+├── models/             # Neural Network Architectures and Backbones
+├── nn/                 # Low-level Neural Network Modules (Tasks, Heads)
+├── tasks/              # Task-specific implementations (Detection, Atomic)
+└── utils/              # Utilities (Losses, Metrics, Ops, Plotting)
+
+tests/                  # Categorized Test Suite
+├── benchmarks/         # Performance and Dataloading benchmarks
+├── data/               # Dataset and Augmentation tests
+├── engine/             # Core engine and trainer tests
+├── integration/        # End-to-End pipeline and CLI tests
+├── models/             # Architecture and layer-wise tests
+└── utils/              # Math, Loss, and Metric tests
+
+tools/
+└── labeler/            # Integrated Data Labeling Tool (FastAPI + MinIO)
 ```
+
+## 🧪 Testing
+
+The project uses `pytest` for comprehensive testing. Tests are categorized for efficiency.
+
+```bash
+# Run all tests
+uv run pytest tests/
+
+# Run specific category (e.g., engine)
+uv run pytest tests/engine/
+
+# Run benchmarks
+uv run python tests/benchmarks/quick_benchmark.py
+```
+
+## 🏷️ Data Labeling
+
+NeuroPilot includes an integrated labeling tool with S3-compatible storage (MinIO).
+
+```bash
+# Start MinIO and the Labeler app
+uv run python tools/labeler/run.py
+```
+The tool will automatically start MinIO via Docker and launch the FastAPI server at `http://localhost:8000`.
 
 ## 📊 Metrics & Logging
 
