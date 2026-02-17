@@ -14,7 +14,7 @@ def run_real_training():
     overrides = {
         "model_cfg": "neuro_pilot/cfg/models/yolo_all_tasks.yaml",
         "data": {
-            "root_dir": "neuro_pilot/data",
+            "dataset_yaml": "data_v1/data.yaml",
             "batch_size": 16,  # Reduced from 32 for 6GB VRAM safety
             "image_size": 640,
             "augment": {

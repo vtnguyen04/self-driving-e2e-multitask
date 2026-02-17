@@ -161,6 +161,10 @@ class LoadTensors:
     def __init__(self, source, imgsz=640):
         self.imgsz = imgsz
         if isinstance(source, np.ndarray):
+            if source.ndim == 3:
+                source = source.transpose(2, 0, 1)
+            elif source.ndim == 4:
+                source = source.transpose(0, 3, 1, 2)
             source = torch.from_numpy(source)
 
         if source.ndim == 3:

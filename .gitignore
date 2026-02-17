@@ -1,5 +1,5 @@
-# Ignore all data directories by default
-data/
+# Ignore root data directory
+/data/
 
 # --- Exceptions ---
 # Un-ignore the neuro_pilot/data python module

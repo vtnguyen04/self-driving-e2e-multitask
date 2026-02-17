@@ -7,7 +7,7 @@ from neuro_pilot.cfg.schema import AppConfig
 def test_dummy_dataloader():
     cfg = AppConfig()
     cfg.data.batch_size = 2
-    loader = create_dummy_dataloader(cfg, sequence_mode=False)
+    loader = create_dummy_dataloader(cfg)
 
     batch = next(iter(loader))
     assert 'image' in batch

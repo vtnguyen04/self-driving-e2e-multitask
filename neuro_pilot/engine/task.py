@@ -134,6 +134,8 @@ class MultiTask(BaseTask):
         return self.criterion
 
     def get_trainer(self) -> Trainer:
+        if self.criterion is None:
+            self.build_criterion()
         trainer = Trainer(self.cfg, overrides=self.overrides)
         trainer.criterion = self.criterion
         if self.model:
@@ -141,6 +143,8 @@ class MultiTask(BaseTask):
         return trainer
 
     def get_validator(self) -> Validator:
+        if self.criterion is None:
+            self.build_criterion()
         # Use cuda as default, but allow override
         device = self.overrides.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
         v = Validator(self.cfg, self.model, self.criterion, device=device)
