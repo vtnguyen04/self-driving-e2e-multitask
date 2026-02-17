@@ -34,6 +34,7 @@ class TestDataPipeline(unittest.TestCase):
                 self.assertEqual(data['command_idx'], 0)
                 self.assertIn('curvature', data)
                 self.assertIn('categories', data)
+                self.assertIn('heatmap', data)
 
     def test_robustness_injection(self):
         # Sample with command 0 (FOLLOW_LANE) should trigger robustness injection
@@ -73,6 +74,7 @@ class TestDataPipeline(unittest.TestCase):
             'command_idx': 0,
             'waypoints': torch.zeros(10, 2),
             'curvature': torch.tensor(0.1),
+            'heatmap': torch.zeros(56, 56),
             'bboxes': torch.tensor([[0.5, 0.5, 0.1, 0.1]]),
             'categories': torch.tensor([1])
         }]

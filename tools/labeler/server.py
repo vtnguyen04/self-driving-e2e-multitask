@@ -90,8 +90,17 @@ async def get_image(filename: str):
     else:
          file_path = Path(row['image_path'])
 
+    # Robust Fix: If path stored in DB is missing (e.g. moved to split), search splits
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+        splits = ['train', 'val', 'test']
+        for split in splits:
+            test_path = DATA_DIR / split / "images" / filename
+            if test_path.exists():
+                file_path = test_path
+                break
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Image {filename} not found in any split")
     return FileResponse(file_path)
 
 @app.post("/api/duplicate/{filename}")
@@ -183,7 +192,44 @@ async def save_label(data: LabelData):
 
     conn.close()
 
-    # 2. Backup to JSON File (Virtual Name)
+    # 2. Export Standard YOLO Format
+    from neuro_pilot.data.utils import save_yolo_label
+    try:
+        # We need normalized coordinates for YOLO.
+        # The LabelData should already be in 0..1 range if the UI follows requirements.
+        # Ensure 'data/labels' exists
+        label_dir = DATA_DIR / "labels"
+        label_dir.mkdir(parents=True, exist_ok=True)
+
+        yolo_label_path = label_dir / (Path(filename).stem + ".txt")
+        save_yolo_label(
+            yolo_label_path,
+            cls=data.categories,
+            bboxes=data.bboxes,
+            keypoints=data.waypoints, # Midline waypoints
+            command=data.command
+        )
+
+        # 3. Ensure data.yaml exists
+        yaml_path = DATA_DIR / "data.yaml"
+        if not yaml_path.exists():
+            import yaml
+            names = ["Stop", "Obstacle", "Pedestrian", "Car", "Priority", "Crosswalk", "Oneway", "Stop-Line", "Parking", "Highway-Entry", "Roundabout", "Highway-Exit", "Traffic-Light", "No-Entry"]
+            yaml_content = {
+                'path': str(DATA_DIR.absolute()),
+                'train': 'train/images',
+                'val': 'val/images',
+                'test': 'test/images',
+                'nc': len(names),
+                'names': names
+            }
+            with open(yaml_path, 'w') as f:
+                yaml.dump(yaml_content, f)
+
+    except Exception as e:
+        print(f"Warning: Failed to export standard YOLO label: {e}")
+
+    # 4. Backup to JSON File (Virtual Name)
     try:
         json_path = PROCESSED_DIR / (Path(filename).stem + ".json")
         with open(json_path, "w") as f:

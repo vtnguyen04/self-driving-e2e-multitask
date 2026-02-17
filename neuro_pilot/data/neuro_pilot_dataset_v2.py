@@ -34,55 +34,114 @@ class NeuroPilotDataset(Dataset):
 
         if samples is not None:
             self.samples = samples
+            self.names = []
         elif self.dataset_yaml:
+            data = check_dataset(self.dataset_yaml)
+            self.names = data.get('names', [])
             self.samples = self._load_yolo_samples()
         else:
             self.samples = self._load_samples()
+            self.names = []
 
         if self.split == 'train':
             self._inject_robustness_samples()
 
     def _load_yolo_samples(self) -> List[Sample]:
-        """Load and normalize YOLO samples."""
+        """Load and normalize YOLO samples (Ultralytics + MultiTask)."""
         data = check_dataset(self.dataset_yaml)
         path = Path(data.get('path', ''))
-        img_dir = data.get('train') if self.split == 'train' else data.get('val')
+        if self.split == 'train':
+            img_dir = data.get('train')
+        elif self.split == 'val':
+            img_dir = data.get('val')
+        elif self.split == 'test':
+            img_dir = data.get('test')
+        else:
+            img_dir = None
+
         if not img_dir: return []
 
-        img_dir = path / img_dir if isinstance(img_dir, str) else [path / x for x in img_dir]
+        # Properly join paths: many YOLO yaml files use relative paths from the yaml's parent
+        # self.dataset_yaml is the absolute path to the data.yaml
+        yaml_dir = Path(self.dataset_yaml).parent
+
+        if isinstance(img_dir, str):
+            # Roboflow quirk/Fallback: it says ../train/images but train is in the same dir as data.yaml
+            p = (yaml_dir / img_dir).resolve()
+            if not p.exists():
+                # Fallback: maybe it's actually in yaml_dir/train/images (ignoring the ../)
+                alt_p = (yaml_dir / img_dir.replace('../', '')).resolve()
+                if alt_p.exists(): p = alt_p
+            img_dir = p
+        else:
+            img_dir_list = []
+            for x in img_dir:
+                p = (yaml_dir / x).resolve()
+                if not p.exists():
+                    alt_p = (yaml_dir / x.replace('../', '')).resolve()
+                    if alt_p.exists(): p = alt_p
+                img_dir_list.append(p)
+            img_dir = img_dir_list
+
+        print(f"DEBUG: yaml_dir={yaml_dir}")
+        print(f"DEBUG: resolved img_dir={img_dir}")
+
         img_files = get_image_files(img_dir)
         label_files = img2label_paths(img_files)
 
         loaded_samples = []
         for img_p, label_p in zip(img_files, label_files):
-            # parse_yolo_label returns normalized [cls, [[x,y,w,h],...], [[kpts],...]]
-            cls, bboxes_norm, kpts_norm = parse_yolo_label(label_p)
+            # 1. Parse Label (YOLO + MultiTask Extension)
+            cls_all, bboxes_norm, kpts_norm, cmd = parse_yolo_label(label_p)
 
-            # Convert YOLO center-xywh to top-left xywh (still normalized 0-1)
+            # 2. Separate Tasks: Filter out Reserved IDs 98 (Trajectory) and 99 (Command already extracted)
+            final_cls = []
+            final_bboxes_norm = []
+            final_wp_norm = []
+
+            for c, b, k in zip(cls_all, bboxes_norm, kpts_norm):
+                if c == 98: # Dedicated Trajectory Class
+                    if not final_wp_norm: # Only take first trajectory if multiple exist
+                        # Convert kpt [x, y, v, x, y, v...] or [x, y, x, y...] to [[x,y], ...]
+                        step = 3 if len(k) % 3 == 0 and len(k) > 0 else 2
+                        for i in range(0, len(k), step):
+                            if i + 1 < len(k):
+                                final_wp_norm.append([k[i], k[i+1]])
+                elif c == 99:
+                    continue # Already handled in cmd return value
+                else:
+                    final_cls.append(c)
+                    final_bboxes_norm.append(b)
+
+            # 3. Convert YOLO center-xywh to top-left xywh (normalized)
             converted_bboxes = []
-            for b in bboxes_norm:
+            for b in final_bboxes_norm:
                 cx, cy, w, h = b
                 converted_bboxes.append([cx - w/2, cy - h/2, w, h])
 
-            # Extract waypoints (0-1)
-            wp_norm = []
-            if kpts_norm:
-                kp = kpts_norm[0]
-                step = 3 if len(kp) % 3 == 0 else 2
-                for i in range(0, len(kp), step):
-                    wp_norm.append([kp[i], kp[i+1]])
+            # 4. Global Command
+            final_cmd = cmd if cmd is not None else 0
 
             loaded_samples.append(Sample(
-                image_path=str(img_p), command=0,
-                waypoints=wp_norm, bboxes=converted_bboxes, categories=cls
+                image_path=str(img_p), command=final_cmd,
+                waypoints=final_wp_norm, bboxes=converted_bboxes, categories=final_cls
             ))
         return loaded_samples
 
     def _load_samples(self) -> List[Sample]:
         """Load and normalize samples from DB (canonical 224 space)."""
         import json, sqlite3
-        db_path = (self.root_dir / 'dataset.db') if self.root_dir else (Path(__file__).resolve().parent / "dataset.db")
-        if not db_path.exists(): return []
+        if self.root_dir:
+            db_path = self.root_dir / 'dataset.db'
+        else:
+            # Fallback to root data folder: neuro_pilot/data/neuro_pilot_dataset_v2.py -> data/
+            db_path = Path(__file__).resolve().parent.parent.parent / "data" / "dataset.db"
+
+        if not db_path.exists():
+            # Second fallback: check if it's still in the old location for some reason
+            old_db_path = Path(__file__).resolve().parent / "dataset.db"
+            if old_db_path.exists(): db_path = old_db_path
+            else: return []
 
         conn = sqlite3.connect(db_path); conn.row_factory = sqlite3.Row; c = conn.cursor()
         c.execute("SELECT image_path, data FROM samples WHERE is_labeled=1")
@@ -183,9 +242,19 @@ class NeuroPilotDataset(Dataset):
         # Command
         cmd_onehot = torch.zeros(4); cmd_onehot[sample.command] = 1.0
 
+        # Heatmap (Generated from Waypoints/BBoxes if needed by the head)
+        # Here we just provide a placeholder or a simple gaussian at waypoints
+        heatmap = torch.zeros((self.imgsz // 4, self.imgsz // 4))
+        for wp in wp_aug:
+             # Scale to heatmap size
+             hx, hy = int(wp[0] / 4), int(wp[1] / 4)
+             if 0 <= hx < heatmap.shape[1] and 0 <= hy < heatmap.shape[0]:
+                  heatmap[hy, hx] = 1.0 # Simple peak
+
         return {
             'image': img_t, 'command': cmd_onehot, 'command_idx': sample.command,
             'waypoints': wp_t, 'bboxes': bboxes_t, 'categories': cls_t,
+            'heatmap': heatmap,
             'curvature': torch.tensor(0.0) # Simplified for now
         }
 
@@ -198,6 +267,7 @@ def custom_collate_fn(batch):
     collated['command'] = torch.stack([b['command'] for b in batch])
     collated['command_idx'] = torch.tensor([b['command_idx'] for b in batch])
     collated['waypoints'] = torch.stack([b['waypoints'] for b in batch])
+    collated['heatmap'] = torch.stack([b['heatmap'] for b in batch])
     collated['curvature'] = torch.stack([b['curvature'] for b in batch])
 
     batch_bboxes, batch_cls, batch_idx = [], [], []

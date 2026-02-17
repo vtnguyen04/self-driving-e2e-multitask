@@ -291,10 +291,10 @@
     <div class="control-group">
         <h4>Scene Command</h4>
         <select id="cmdSelect">
-            <option value="0">Follow Lane</option>
-            <option value="1">Turn Left</option>
-            <option value="2">Turn Right</option>
-            <option value="3">Go Straight</option>
+            <option value="0">FOLLOW LANE</option>
+            <option value="1">LEFT</option>
+            <option value="2">RIGHT</option>
+            <option value="3">STRAIGHT</option>
         </select>
     </div>
 
@@ -499,23 +499,22 @@
     // --- Custom Classes Management ---
     let customClasses = JSON.parse(localStorage.getItem('customClasses') || '[]');
 
+    const CLASS_NAMES = [
+        "Stop", "Obstacle", "Pedestrian", "Car", "Priority",
+        "Crosswalk", "Oneway", "Stop-Line", "Parking",
+        "Highway-Entry", "Roundabout", "Highway-Exit", "Traffic-Light", "No-Entry"
+    ];
+
     function updateClassSelects() {
         const selects = [document.getElementById('clsSelect'), document.getElementById('floatClsSelect')];
-        const defaults = ["Stop Sign", "Traffic Light", "Pedestrian", "Car", "Priority Sign", "Crosswalk"];
 
         selects.forEach(sel => {
             sel.innerHTML = ''; // Clear
-            defaults.forEach((d, i) => {
+            CLASS_NAMES.forEach((name, i) => {
                 const opt = document.createElement('option');
                 opt.value = i;
-                opt.text = d.toUpperCase();
+                opt.text = `${i}: ${name.toUpperCase()}`;
                 sel.appendChild(opt);
-            });
-            customClasses.forEach((clsName, idx) => {
-                 const opt = document.createElement('option');
-                 opt.value = 6 + idx;
-                 opt.text = clsName.toUpperCase();
-                 sel.appendChild(opt);
             });
         });
     }

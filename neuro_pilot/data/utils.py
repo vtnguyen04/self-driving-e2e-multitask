@@ -2,6 +2,8 @@ import os
 import glob
 from pathlib import Path
 import yaml
+import numpy as np
+from typing import List, Union, Optional
 
 # Ultralytics-style extensions
 IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes
@@ -14,22 +16,24 @@ def check_dataset(data, autodownload=True):
         data = yaml.safe_load(open(data))
     return data
 
-def get_image_files(img_dir):
+def get_image_files(img_dir: Union[str, Path, List]) -> List[str]:
     """Read image files."""
     try:
         f = []  # image files
         for p in img_dir if isinstance(img_dir, list) else [img_dir]:
-            p = Path(p)  # os-agnostic
-            if p.is_dir():  # dir
+            p = Path(p)
+            if not p.exists():
+                raise FileNotFoundError(f'{p} does not exist')
+
+            if p.is_dir():
                 f += glob.glob(str(p / '**' / '*.*'), recursive=True)
-                # F = list(p.rglob('*.*'))  # pathlib
-            elif p.is_file():  # file
+            elif p.is_file():
                 with open(p) as t:
                     t = t.read().strip().splitlines()
                     parent = str(p.parent) + os.sep
-                    f += [x.replace('./', parent) if x.startswith('./') else x for x in t]  # local to global path
+                    f += [x.replace('./', parent) if x.startswith('./') else x for x in t]
             else:
-                raise FileNotFoundError(f'{p} does not exist')
+                raise Exception(f'Error loading data from {p}')
         im_files = sorted(x.replace('/', os.sep) for x in f if x.split('.')[-1].lower() in IMG_FORMATS)
         return im_files
     except Exception as e:
@@ -40,54 +44,78 @@ def img2label_paths(img_paths):
     sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
-def parse_yolo_label(label_path, num_keypoints=0):
+def parse_yolo_label(label_p, nc=14):
     """
-    Parse a single YOLO label file.
-    Format: class x y w h [px1 py1 v1 px2 py2 v2 ...]
+    Parse a single YOLO label file with Multi-Task extensions.
+    Format:
+    1. BBox: class x_c y_c w h (normalized)
+    2. Pose/Trajectory: class x_c y_c w h px1 py1 [v1] px2 py2 [v2] ...
+    3. Global Command (Custom): 99 command_id (where 99 is reserved for Cmd)
     """
-    bboxes = []
-    keypoints = []
-    cls = []
+    cls, bboxes, keypoints, command = [], [], [], None
+    if not os.path.isfile(label_p):
+        return cls, bboxes, keypoints, command
 
-    if os.path.isfile(label_path):
-        with open(label_path) as f:
-            lines = f.readlines()
-            for line in lines:
-                parts = line.strip().split()
-                if not parts: continue
+    with open(label_p) as f:
+        for line in f.readlines():
+            parts = list(map(float, line.strip().split()))
+            if not parts: continue
 
-                # Class
-                c = int(parts[0])
+            c = int(parts[0])
+            if c == 99: # Special case for global command
+                command = int(parts[1])
+                continue
+
+            if c == 98: # Special case for trajectory
+                keypoints.append(parts[5:])
                 cls.append(c)
+                bboxes.append(parts[1:5])
+                continue
 
-                # BBox (normalized xywh)
-                # YOLO format: x_center, y_center, width, height
-                # We store them as standard list for now, conversion happens in Dataset or Sample
-                # However, Sample expects bboxes, and NeuroPilotDataset expects [x, y, w, h] PIXEL coords usually from Labeler?
-                # Wait, NeuroPilotDataset lines 202+ says: "Normalize bboxes to [0, 1] AFTER augmentation".
-                # StandardAugmentor returns PIXELS.
-                # So Sample should ideally store:
-                # - Pixels if we want consistency with Labeler
-                # - Normalized if we want consistency with YOLO
-                # NeuroPilotDataset.getitem assumes Sample.bboxes are PIXELS (from json/db).
-                # But here we read YOLO text files which are NORMALIZED.
-                # We need to denote that.
-                # Or we can denormalize them if we know image size.
-                # But we don't know image size here efficiently without opening image.
-                # Best practice: Store as is, and let Dataset handle "normalized=True" flag or check values <= 1.0.
+            cls.append(c)
+            if len(parts) == 5:
+                bboxes.append(parts[1:5])
+                keypoints.append([])
+            elif len(parts) > 5:
+                # Could be Pose (Keypoints) or Segmentation (Polygon)
+                # YOLO Pose usually matches: class x_c y_c w h (px py [v])...
+                # YOLO Segment matches: class x1 y1 x2 y2 ...
 
-                bx, by, bw, bh = map(float, parts[1:5])
-                bboxes.append([bx, by, bw, bh])
+                # Heuristic: if it's segmentation, it doesn't have w,h in typical BBox spots
+                # But Ultralytics often converts segments to bboxes internally.
+                # Here we'll treat them as keypoints if we want trajectories.
 
-                # Keypoints (Waypoints?)
-                # If parts > 5, specific to Pose
-                if len(parts) > 5:
-                    # kpts = [x, y, v, x, y, v...]
-                    # We usually want just x,y for waypoints
-                    kpts = list(map(float, parts[5:]))
-                    # Reshape?
-                    # For waypoints we usually have a fixed number logic.
-                    # Currently just storing raw.
-                    keypoints.append(kpts)
+                # For NeuroPilot trajectory, we expect waypoints.
+                # If it's a polygon, we take the points as waypoints.
 
-    return cls, bboxes, keypoints
+                if len(parts) % 2 == 0: # Likely Polygon x1 y1 x2 y2 ... (plus class) -> class + points
+                    # Segmentation format: class x1 y1 x2 y2 ...
+                    # We convert to a 'bounding box' for detection compatibility
+                    pts = np.array(parts[1:]).reshape(-1, 2)
+                    x1, y1 = pts.min(0)
+                    x2, y2 = pts.max(0)
+                    bboxes.append([(x1+x2)/2, (y1+y2)/2, x2-x1, y2-y1])
+                    keypoints.append(parts[1:]) # Use points as waypoints
+                else:
+                    # Likely Pose format: class x_c y_c w h px py v ...
+                    bboxes.append(parts[1:5])
+                    keypoints.append(parts[5:])
+            else:
+                bboxes.append([0.5, 0.5, 0.0, 0.0])
+                keypoints.append([])
+
+    return cls, bboxes, keypoints, command
+
+def save_yolo_label(label_path: Union[str, Path], cls: List[int], bboxes: List[List[float]], keypoints: List[List[float]], command: Optional[int] = None):
+    """Save label in standard YOLO format + extension for multi-task."""
+    with open(label_path, 'w') as f:
+        # Write Global Command first as special class 99
+        if command is not None:
+            f.write(f"99 {command}\n")
+
+        for c, bbox, kpts in zip(cls, bboxes, keypoints):
+            # bbox is typically [x_center, y_center, w, h] normalized
+            line = f"{c} {' '.join(map(str, bbox))}"
+            if kpts:
+                line += f" {' '.join(map(str, kpts))}"
+            f.write(f"{line}\n")
