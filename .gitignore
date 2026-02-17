@@ -1,3 +1,17 @@
+# Ignore all data directories by default
+data/
+
+# --- Exceptions ---
+# Un-ignore the neuro_pilot/data python module
+!/neuro_pilot/data/
+
+# Un-ignore the minio_data directory for .gitkeep tracking
+!/tools/labeler/data/
+/tools/labeler/data/*
+!/tools/labeler/data/minio_data/
+
+
+# --- Standard Ignores ---
 __pycache__/
 *.pth
 *.pt
@@ -6,11 +20,7 @@ experiments/
 .env
 .DS_Store
 ultralytics/
-*.log
-data/
-!/tools/labeler/data/
-/tools/labeler/data/*
-!/tools/labeler/data/minio_data/
+.log
 tools/labeler/exports/
 tools/labeler/labels.db
 *.db
