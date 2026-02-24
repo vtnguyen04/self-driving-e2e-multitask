@@ -1,4 +1,4 @@
-import { Check, Search } from 'lucide-react';
+import { Check, Search, Trash2 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCanvasTransform } from '../../hooks/useCanvasTransform';
 import { BBox, Waypoint } from '../../types';
@@ -29,6 +29,8 @@ const THEME = {
   crosshair: 'rgba(255, 255, 255, 0.6)',
   font: 'bold 14px Orbitron, sans-serif'
 };
+
+const clamp = (val: number, min = 0, max = 1) => Math.max(min, Math.min(max, val));
 
 const getBezierPoint = (p0: Waypoint, p1: Waypoint, p2: Waypoint, p3: Waypoint, t: number) => {
   const cx = (1 - t) ** 3 * p0.x + 3 * (1 - t) ** 2 * t * p1.x + 3 * (1 - t) * t ** 2 * p2.x + t ** 3 * p3.x;
@@ -255,17 +257,33 @@ export const Annotator: React.FC<AnnotatorProps> = ({
     }
   };
 
+  const handleDelete = useCallback((idx: number) => {
+    const next = [...bboxes];
+    next.splice(idx, 1);
+    onUpdate({ bboxes: next });
+    onSelectBBox?.(null);
+  }, [bboxes, onUpdate, onSelectBBox]);
+
+  useEffect(() => {
+    const handleKeys = (e: KeyboardEvent) => {
+        if (document.activeElement?.tagName === 'INPUT') return;
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBBoxIdx !== undefined && selectedBBoxIdx !== null) {
+            handleDelete(selectedBBoxIdx);
+        }
+    };
+    window.addEventListener('keydown', handleKeys);
+    return () => window.removeEventListener('keydown', handleKeys);
+  }, [selectedBBoxIdx, handleDelete]);
+
   useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
+        const rawWorld = toWorld(e.clientX, e.clientY);
+        const world = { x: clamp(rawWorld.x), y: clamp(rawWorld.y) };
+        setMouseWorld(world);
+
         if (!dragInfo && !isDrawing) {
-            // Still update mouseWorld for crosshairs
-            const world = toWorld(e.clientX, e.clientY);
-            setMouseWorld(world);
             return;
         }
-
-        const world = toWorld(e.clientX, e.clientY);
-        setMouseWorld(world);
 
         if (dragInfo?.type === 'pan') {
             handlePan(e.clientX - dragInfo.startX, e.clientY - dragInfo.startY);
@@ -289,14 +307,35 @@ export const Annotator: React.FC<AnnotatorProps> = ({
             if (dragInfo.handle === 'tr') { x2 = world.x; y1 = world.y; }
             if (dragInfo.handle === 'bl') { x1 = world.x; y2 = world.y; }
             if (dragInfo.handle === 'br') { x2 = world.x; y2 = world.y; }
-            newBoxes[dragInfo.index] = { cx: (x1+x2)/2, cy: (y1+y2)/2, w: Math.abs(x2-x1), h: Math.abs(y2-y1), category: b.category };
+
+            // Ensure x1 < x2 and y1 < y2 for calculations, but world values already clamped
+            const fx1 = clamp(Math.min(x1, x2)), fx2 = clamp(Math.max(x1, x2));
+            const fy1 = clamp(Math.min(y1, y2)), fy2 = clamp(Math.max(y1, y2));
+
+            newBoxes[dragInfo.index] = {
+                cx: (fx1 + fx2) / 2,
+                cy: (fy1 + fy2) / 2,
+                w: fx2 - fx1,
+                h: fy2 - fy1,
+                category: b.category
+            };
             onUpdate({ bboxes: newBoxes });
         } else if (dragInfo?.type === 'box') {
             const newBoxes = [...bboxes];
-            const box = newBoxes[dragInfo.index];
+            const box = { ...newBoxes[dragInfo.index] };
             const prevWorld = toWorld(dragInfo.startX, dragInfo.startY);
-            const dx = world.x - prevWorld.x;
-            const dy = world.y - prevWorld.y;
+            let dx = world.x - prevWorld.x;
+            let dy = world.y - prevWorld.y;
+
+            // Constrain movement to keep whole box inside [0, 1]
+            const halfW = box.w / 2;
+            const halfH = box.h / 2;
+
+            if (box.cx + dx - halfW < 0) dx = halfW - box.cx;
+            if (box.cx + dx + halfW > 1) dx = 1 - halfW - box.cx;
+            if (box.cy + dy - halfH < 0) dy = halfH - box.cy;
+            if (box.cy + dy + halfH > 1) dy = 1 - halfH - box.cy;
+
             newBoxes[dragInfo.index] = { ...box, cx: box.cx + dx, cy: box.cy + dy };
             onUpdate({ bboxes: newBoxes });
             setDragInfo({ ...dragInfo, startX: e.clientX, startY: e.clientY });
@@ -374,8 +413,8 @@ export const Annotator: React.FC<AnnotatorProps> = ({
         <div
             className="absolute z-[60] flex flex-col gap-1 animate-in slide-in-from-top-2 duration-200"
             style={{
-                left: selectedBoxPos.x + 40, // More offset to avoid blocking handles
-                top: selectedBoxPos.y - 20
+                left: (canvasRef.current?.offsetLeft || 0) + selectedBoxPos.x + 20,
+                top: (canvasRef.current?.offsetTop || 0) + selectedBoxPos.y - 60
             }}
         >
             <div className="bg-[#0a0a0c] border-2 border-accent/50 rounded-xl shadow-[0_0_30px_rgba(0,0,0,0.8)] overflow-hidden min-w-[180px]">
@@ -398,6 +437,13 @@ export const Annotator: React.FC<AnnotatorProps> = ({
                         }}
                         className="bg-transparent border-none outline-none text-[11px] font-black text-white placeholder:text-white/20 w-full"
                     />
+                    <button
+                        onClick={() => handleDelete(selectedBBoxIdx!)}
+                        className="p-1 hover:bg-white/10 rounded transition-colors text-white/40 hover:text-red-500"
+                        title="Delete (Del)"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                 </div>
                 <div className="p-1 max-h-[150px] overflow-y-auto cyber-scrollbar">
                     {filteredQuickClasses.map((c) => (

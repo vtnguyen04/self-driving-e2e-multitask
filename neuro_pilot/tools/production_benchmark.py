@@ -20,11 +20,11 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     try:
-        # 1. Initialize Backend
+        # Initialize Backend
         with console.status(f"[bold cyan]Initializing {Path(backend_path).name} on {device}..."):
             backend = AutoBackend(backend_path, device=device)
 
-        # 2. Warmup
+        # Warmup
         input_shape = (imgsz[0], imgsz[1], imgsz[2], imgsz[3])
         dummy_input = torch.randn(input_shape, device=device)
         if hasattr(backend, 'fp16') and backend.fp16:
@@ -36,7 +36,7 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        # 3. Benchmark
+        # Benchmark
         latencies = []
         console.print(f"  [green]Benchmarking ({iterations} iterations)...[/green]")
 

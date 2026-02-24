@@ -34,9 +34,20 @@ export const AnnotatePage: React.FC = () => {
   const [history, setHistory] = useState<CurrentDataState[]>([]);
   const [selectedBBoxIdx, setSelectedBBoxIdx] = useState<number | null>(null);
   const [filter, setFilter] = useState<'all' | 'labeled' | 'unlabeled'>(initialFile ? 'all' : 'unlabeled');
+  const [saveStatus, setSaveStatus] = useState<'none' | 'saving' | 'saved' | 'error'>('none');
+  const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(true);
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const lastSavedDataJson = useRef<string>("");
 
-  const [lastSelectedClass, setLastSelectedClass] = useState<number>(0);
+  const [lastSelectedClass, setLastSelectedClass] = useState<number>(() => {
+    const saved = localStorage.getItem('lastSelectedClass');
+    return saved ? parseInt(saved) : 0;
+  });
   const [classSearch, setClassSearch] = useState('');
+
+  useEffect(() => {
+    localStorage.setItem('lastSelectedClass', lastSelectedClass.toString());
+  }, [lastSelectedClass]);
 
   const initialized = useRef(false);
 
@@ -64,17 +75,24 @@ export const AnnotatePage: React.FC = () => {
   }, [loadClasses, loadFiles]);
 
   const handleSelect = useCallback(async (filename: string) => {
+    setIsLoadingData(true);
     setSelectedFilename(filename);
     setSelectedBBoxIdx(null);
-    const data = await API.labels.get(filename);
-    setCurrentData({
-        bboxes: data.bboxes || [],
-        waypoints: data.waypoints || [],
-        control_points: data.control_points || [],
-        command: data.command || 0
-    });
-    setHistory([]);
-    setSearchParams({ file: filename }, { replace: true });
+    try {
+        const data = await API.labels.get(filename);
+        const dataState = {
+            bboxes: data.bboxes || [],
+            waypoints: data.waypoints || [],
+            control_points: data.control_points || [],
+            command: data.command || 0
+        };
+        setCurrentData(dataState);
+        lastSavedDataJson.current = JSON.stringify(dataState);
+        setHistory([]);
+        setSearchParams({ file: filename }, { replace: true });
+    } finally {
+        setIsLoadingData(false);
+    }
   }, [setSearchParams]);
 
   const handleUpdate = useCallback((updated: Partial<Sample>) => {
@@ -92,10 +110,20 @@ export const AnnotatePage: React.FC = () => {
         finalUpdate.waypoints = resampled;
     }
 
-    if (updated.bboxes && updated.bboxes.length > (currentData.bboxes?.length || 0)) {
-        const newBoxIdx = updated.bboxes.length - 1;
-        if (finalUpdate.bboxes && finalUpdate.bboxes[newBoxIdx].category === 0 && lastSelectedClass !== 0) {
-            finalUpdate.bboxes[newBoxIdx].category = lastSelectedClass;
+    if (updated.bboxes) {
+        // Detect if a new box was added
+        if (updated.bboxes.length > (currentData.bboxes?.length || 0)) {
+            const newBoxIdx = updated.bboxes.length - 1;
+            // Always apply the last selected class to new boxes
+            finalUpdate.bboxes![newBoxIdx].category = lastSelectedClass;
+        }
+        // Detect if an existing box's category was changed (e.g. via quick search)
+        else if (updated.bboxes.length === currentData.bboxes?.length) {
+            updated.bboxes.forEach((box, i) => {
+                if (box.category !== currentData.bboxes[i].category) {
+                    setLastSelectedClass(box.category);
+                }
+            });
         }
     }
 
@@ -111,16 +139,46 @@ export const AnnotatePage: React.FC = () => {
     }
   }, [history]);
 
-  const handleSave = useCallback(async () => {
-    if (!selectedFilename) return;
-    await API.labels.save(selectedFilename, {
-      command: currentData.command,
-      bboxes: currentData.bboxes,
-      waypoints: currentData.waypoints,
-      control_points: currentData.control_points
-    });
-    setSamples(prev => prev.map(s => s.filename === selectedFilename ? { ...s, is_labeled: true } : s));
-  }, [selectedFilename, currentData]);
+  const handleSave = useCallback(async (silent = false) => {
+    if (!selectedFilename || isLoadingData) return;
+    if (!silent) setSaveStatus('saving');
+    try {
+        const dataToSave = {
+          command: currentData.command,
+          bboxes: currentData.bboxes,
+          waypoints: currentData.waypoints,
+          control_points: currentData.control_points
+        };
+        await API.labels.save(selectedFilename, dataToSave);
+        lastSavedDataJson.current = JSON.stringify(dataToSave);
+        const isActuallyLabeled = currentData.bboxes.length > 0 || currentData.waypoints.length > 0;
+        setSamples(prev => prev.map(s => s.filename === selectedFilename ? { ...s, is_labeled: isActuallyLabeled } : s));
+        if (!silent) setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('none'), 2000);
+    } catch (err) {
+        console.error(err);
+        setSaveStatus('error');
+    }
+  }, [selectedFilename, currentData, isLoadingData]);
+
+  // Auto-save effect
+  useEffect(() => {
+    if (!selectedFilename || !isAutoSaveEnabled || isLoadingData) return;
+
+    // Check if anything actually changed
+    const currentDataJson = JSON.stringify(currentData);
+    if (currentDataJson === lastSavedDataJson.current) return;
+
+    const timer = setTimeout(() => {
+        setSaveStatus('saving');
+        handleSave(true).then(() => {
+            setSaveStatus('saved');
+            setTimeout(() => setSaveStatus('none'), 2000);
+        }).catch(() => setSaveStatus('error'));
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [currentData, selectedFilename, handleSave, isAutoSaveEnabled, isLoadingData]);
 
   const handleSpawnTemplate = (type: 'straight' | 'left' | 'right') => {
     const p0 = {x:0.5, y:0.9}, p3_base = {x:0.5, y:0.3};
@@ -146,11 +204,13 @@ export const AnnotatePage: React.FC = () => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); handleUndo(); }
       if (e.key === 'ArrowRight') {
           const idx = samples.findIndex(s => s.filename === selectedFilename);
-          if (idx < samples.length - 1) handleSelect(samples[idx + 1].filename).catch(console.error);
+          const nextIdx = (idx + 1) % samples.length;
+          handleSelect(samples[nextIdx].filename).catch(console.error);
       }
       if (e.key === 'ArrowLeft') {
           const idx = samples.findIndex(s => s.filename === selectedFilename);
-          if (idx > 0) handleSelect(samples[idx - 1].filename).catch(console.error);
+          const nextIdx = (idx - 1 + samples.length) % samples.length;
+          handleSelect(samples[nextIdx].filename).catch(console.error);
       }
       if (e.key.toLowerCase() === 's') {
         if (e.ctrlKey || e.metaKey) e.preventDefault();
@@ -199,12 +259,40 @@ export const AnnotatePage: React.FC = () => {
                 <button onClick={() => { setFilter('unlabeled'); initialized.current = false; }} className={`px-5 py-2 text-sm font-black rounded-lg transition-all ${filter === 'unlabeled' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>TODO</button>
                 <button onClick={() => { setFilter('all'); initialized.current = false; }} className={`px-5 py-2 text-sm font-black rounded-lg transition-all ${filter === 'all' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>ALL</button>
             </div>
+
+            <div className="flex items-center gap-4 px-4 bg-white/5 rounded-2xl border border-white/10 py-1">
+                <div className="flex flex-col items-center">
+                    <span className="text-[8px] font-black text-white/40 uppercase mb-1">Auto Save</span>
+                    <button
+                        onClick={() => setIsAutoSaveEnabled(!isAutoSaveEnabled)}
+                        className={`relative w-10 h-5 rounded-full transition-all duration-300 ${isAutoSaveEnabled ? 'bg-accent' : 'bg-white/10'}`}
+                    >
+                        <div className={`absolute top-1 w-3 h-3 bg-black rounded-full transition-all duration-300 ${isAutoSaveEnabled ? 'left-6' : 'left-1'}`} />
+                    </button>
+                </div>
+
+                <div className="flex flex-col min-w-[80px]">
+                    {saveStatus === 'saving' && <span className="text-[9px] font-cyber text-accent animate-pulse uppercase tracking-widest leading-none">SAVING...</span>}
+                    {saveStatus === 'saved' && <span className="text-[9px] font-cyber text-green-400 uppercase tracking-widest leading-none">SYNCED</span>}
+                    {saveStatus === 'error' && <span className="text-[9px] font-cyber text-red-500 uppercase tracking-widest leading-none">FAILED</span>}
+                    {saveStatus === 'none' && <span className={`text-[9px] font-cyber uppercase tracking-widest leading-none ${isAutoSaveEnabled ? 'text-white/20' : 'text-white/10'}`}>{isAutoSaveEnabled ? 'READY' : 'DISABLED'}</span>}
+                </div>
+            </div>
+
             <div className="flex items-center gap-3 bg-white/10 px-5 py-2 rounded-2xl border border-white/20 shadow-xl">
-                <button onClick={() => { const idx = samples.findIndex(s => s.filename === selectedFilename); if (idx > 0) handleSelect(samples[idx-1].filename); }} className="p-1 hover:text-accent transition-colors"><ChevronLeft className="w-7 h-7" /></button>
+                <button onClick={() => {
+                    const idx = samples.findIndex(s => s.filename === selectedFilename);
+                    const nextIdx = (idx - 1 + samples.length) % samples.length;
+                    handleSelect(samples[nextIdx].filename);
+                }} className="p-1 hover:text-accent transition-colors"><ChevronLeft className="w-7 h-7" /></button>
                 <div className="px-4 py-1.5 bg-black/60 rounded-xl text-base font-black font-mono border border-white/10 text-accent">
                     {samples.length > 0 ? currentIndex + 1 : 0} <span className="text-white/40 mx-1">/</span> {samples.length}
                 </div>
-                <button onClick={() => { const idx = samples.findIndex(s => s.filename === selectedFilename); if (idx < samples.length - 1) handleSelect(samples[idx+1].filename); }} className="p-1 hover:text-accent transition-colors"><ChevronRight className="w-7 h-7" /></button>
+                <button onClick={() => {
+                    const idx = samples.findIndex(s => s.filename === selectedFilename);
+                    const nextIdx = (idx + 1) % samples.length;
+                    handleSelect(samples[nextIdx].filename);
+                }} className="p-1 hover:text-accent transition-colors"><ChevronRight className="w-7 h-7" /></button>
             </div>
             <button onClick={() => handleSave()} className="flex items-center gap-3 px-10 py-3 bg-accent text-black rounded-2xl font-black hover:bg-white transition-all shadow-[0_0_30px_rgba(0,255,65,0.5)] uppercase text-sm tracking-[0.1em]">
                 <Save className="w-5 h-5" /> Save Changes
