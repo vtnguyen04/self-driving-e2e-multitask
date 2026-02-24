@@ -34,6 +34,7 @@ dependencies = [
     "onnxruntime<1.24.0",
     "psutil",
     "minio",
+    "onnxsim>=0.4.36",
 ]
 
 [tool.setuptools]

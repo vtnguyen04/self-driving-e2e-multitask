@@ -56,7 +56,41 @@ Configurations are managed via YAML files in `neuro_pilot/cfg/`.
 -   **Model Config**: `models/yolo_style.yaml` (Backbone, Head setup).
 -   **Hyperparameters**: `hyp.yaml` (LR, weight decay, anchors).
 
-## 📂 Project Structure
+## � Deployment & Export (Mới)
+
+NeuroPilot hỗ trợ export model ra ONNX và TensorRT để chạy inference hiệu năng cao trên NVIDIA Jetson.
+
+### 1. Export Model
+
+```bash
+# Export to ONNX
+python tools/export.py --model experiments/clean_minimal_run/weights/best.pt --format onnx --imgsz 320
+
+# Export to TensorRT Engine (Yêu cầu cài đặt TensorRT)
+python tools/export.py --model experiments/clean_minimal_run/weights/best.pt --format engine --imgsz 320 --half
+```
+
+### 2. Inference
+
+Chúng tôi cung cấp 2 script riêng biệt cho từng runtime:
+
+**ONNX Runtime:**
+```bash
+python examples/jetson_inference_onnx.py \
+    --model experiments/clean_minimal_run/weights/best.onnx \
+    --source video.mp4 \
+    --command 0  # 0: Follow, 1: Left, 2: Right, 3: Straight
+```
+
+**TensorRT (Tối ưu hóa tốc độ):**
+```bash
+python examples/jetson_inference_trt.py \
+    --engine experiments/clean_minimal_run/weights/best.engine \
+    --source video.mp4 \
+    --command 0
+```
+
+## �📂 Project Structure
 
 ```text
 neuro_pilot/
