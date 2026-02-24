@@ -26,7 +26,7 @@ class TestAugmentationViz(unittest.TestCase):
 
         # 2. Define labels
         waypoints = np.array([[112, 220], [112, 180], [112, 140], [112, 100]], dtype=np.float32)
-        bboxes = [[102, 90, 20, 20]]
+        bboxes = [[102, 90, 122, 110]] # x1, y1, x2, y2
         categories = [1]
 
         # 3. Augment

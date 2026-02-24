@@ -42,6 +42,7 @@ class TestDataPipeline(unittest.TestCase):
         # Patch random.random at the top level or wherever it's used
         with patch('random.random', return_value=0.1):
             ds = NeuroPilotDataset(samples=samples, split='train')
+            ds.close_mosaic() # Triggers robustness injection
             self.assertEqual(len(ds.samples), 2)
             self.assertIn(ds.samples[1].command, [1, 2])
 
@@ -65,11 +66,12 @@ class TestDataPipeline(unittest.TestCase):
              patch('random.uniform', return_value=112):
             result = mosaic(labels)
             self.assertEqual(result["img"].shape, (448, 448, 3))
-            self.assertIn("categories", result)
+            self.assertIn("cls", result) # Changed from categories to cls
 
     def test_collate_fn(self):
         batch = [{
             'image': torch.zeros(3, 224, 224),
+            'image_path': 'dummy.jpg',
             'command': torch.zeros(4),
             'command_idx': 0,
             'waypoints': torch.zeros(10, 2),

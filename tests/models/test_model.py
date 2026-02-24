@@ -1,4 +1,5 @@
 import unittest
+import torch
 import torch.nn as nn
 from pathlib import Path
 from neuro_pilot.engine.model import NeuroPilot
@@ -29,7 +30,8 @@ class TestNeuroPilot(unittest.TestCase):
         self.assertIsInstance(self.model.model, nn.Linear)
 
     def test_device_property(self):
-        self.assertEqual(str(self.model.device), 'cpu')
+        expected_device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        self.assertEqual(str(self.model.device), expected_device)
 
 if __name__ == '__main__':
     unittest.main()

@@ -22,7 +22,12 @@ class TestCLI(unittest.TestCase):
         cmd = [self.python, "neuro_pilot/entrypoint.py", "benchmark",
                "--model", "neuro_pilot/cfg/models/yolo_style.yaml",
                "--imgsz", "32", "--batch", "1"]
-        result = subprocess.run(cmd, capture_output=True, text=True, env=self.env, timeout=60)
+
+        # Force CPU
+        env = self.env.copy()
+        env["CUDA_VISIBLE_DEVICES"] = ""
+
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
         self.assertEqual(result.returncode, 0)
         self.assertIn("Benchmark Results", result.stdout)
 

@@ -11,10 +11,9 @@ def test_force_augmentation_db():
     data = {
         'img_path': 'neuro_pilot/data/images/video2/video2_frame_000500.jpg',
         'waypoints': [[112, 100], [112, 140], [112, 180], [112, 220]],
-        'bboxes': [[97, 125, 30, 30]],
+        'bboxes': [[97, 125, 127, 155]], # x1, y1, x2, y2
         'categories': [1]
     }
-
     # 2. Find Image
     img_path = data['img_path']
     real_img_path = None

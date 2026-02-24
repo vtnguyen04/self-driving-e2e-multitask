@@ -64,7 +64,7 @@ def test_extensibility():
     try:
         # We need to test proper delegation.
         # Calling model(...) should invoke SimpleModel.forward
-        out = model.model(torch.randn(1, 10))
+        out = model.model(torch.randn(1, 10).to(model.device))
         if out.shape != (1, 2):
             print(f"FAILED: Output shape mismatch. Got {out.shape}, expected (1, 2)")
             sys.exit(1)

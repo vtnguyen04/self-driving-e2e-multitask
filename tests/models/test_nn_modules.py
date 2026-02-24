@@ -62,6 +62,9 @@ class TestNNModules(unittest.TestCase):
         ]
         y = m(x)
         # Standard neuro_pilot Detect returns a dict
+        if isinstance(y, dict) and 'one2many' in y:
+             y = y['one2many']
+
         self.assertIn('boxes', y)
         self.assertIn('scores', y)
 
@@ -69,13 +72,17 @@ class TestNNModules(unittest.TestCase):
         print("Testing Segment...")
         nc, nm = 14, 32
         ch = (64, 128, 256)
-        m = Segment(nc=nc, nm=nm, npr=256, ch=ch).to(self.device)
+        m = Segment(nc=nc, nm=nm, npr=256, ch=ch, end2end=True).to(self.device)
         x = [
             torch.randn(self.batch_size, 64, 80, 80).to(self.device),
             torch.randn(self.batch_size, 128, 40, 40).to(self.device),
             torch.randn(self.batch_size, 256, 20, 20).to(self.device)
         ]
         y = m(x)
+
+        if isinstance(y, dict) and 'one2many' in y:
+             y = y['one2many']
+
         self.assertIn('boxes', y)
         self.assertIn('scores', y)
         self.assertIn('mask_coefficient', y)
@@ -96,8 +103,9 @@ class TestNNModules(unittest.TestCase):
         ]
         y = m(x)
         self.assertIn('heatmap', y)
-        # Should match spatial dimension of c2 (x[1])
-        self.assertEqual(y['heatmap'].shape[2:], x[1].shape[2:])
+        # Should be upsampled by 4x from c2 (16x16 -> 64x64)
+        expected_shape = (x[1].shape[2] * 4, x[1].shape[3] * 4)
+        self.assertEqual(y['heatmap'].shape[2:], expected_shape)
 
     def test_trajectory_head(self):
         print("Testing TrajectoryHead...")

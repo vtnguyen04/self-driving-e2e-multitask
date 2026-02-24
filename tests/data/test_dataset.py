@@ -14,7 +14,7 @@ def test_dummy_dataloader():
     assert 'command' in batch
 
     # Check shapes
-    assert batch['image'].shape == (2, 3, 224, 224)
+    assert batch['image'].shape == (2, 3, 320, 320)
     assert batch['command'].shape == (2, 4) # One-hot
     assert batch['waypoints'].shape == (2, 10, 2) # 10 pts, 2d
 

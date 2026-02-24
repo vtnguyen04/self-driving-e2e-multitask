@@ -65,8 +65,8 @@ class TestDetectionModel(unittest.TestCase):
         self.assertEqual(preds['waypoints'].shape, (2, 10, 2))
         hm = preds['heatmap']
         if isinstance(hm, dict): hm = hm['heatmap']
-        # Heatmap scale check
-        self.assertEqual(hm.shape, (2, 1, 56, 56))
+        # Heatmap scale check - now full resolution
+        self.assertEqual(hm.shape, (2, 1, 224, 224))
 
     def test_forward_pass_eval(self):
         model = DetectionModel(cfg=self.cfg_path, verbose=False)

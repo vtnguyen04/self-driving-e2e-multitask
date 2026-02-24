@@ -6,7 +6,7 @@ from neuro_pilot.nn.tasks import DetectionModel
 
 class TestArchitectureIntegrity(unittest.TestCase):
     def setUp(self):
-        self.cfg_path = 'neuro_pilot/cfg/models/neuro_pilot_v2.yaml'
+        self.cfg_path = 'neuro_pilot/cfg/models/yolo_style.yaml'
         self.device = torch.device('cpu')
 
         # Patch TimmBackbone to return expected list of features

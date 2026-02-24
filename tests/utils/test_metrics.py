@@ -16,6 +16,7 @@ class MockHead:
         self.stride = torch.tensor([8.0, 16.0, 32.0])
         self.dummy_param = torch.nn.Parameter(torch.tensor(0.0))
         self.det_head = self
+        self.heads = {'detect': self}
 
     def parameters(self):
         return iter([self.dummy_param])

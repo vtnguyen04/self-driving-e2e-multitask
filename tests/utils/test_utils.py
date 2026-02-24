@@ -1,7 +1,7 @@
 
 import unittest
 import torch
-from neuro_pilot.utils.losses import HeatmapWaypointLoss, CombinedLoss
+from neuro_pilot.utils.losses import HeatmapLoss, CombinedLoss
 from neuro_pilot.nn.tasks import DetectionModel
 
 class MockConfig:
@@ -25,7 +25,7 @@ class TestUtils(unittest.TestCase):
         target = torch.randn(1, 1, 32, 32).gt(0.5).float()
 
         # Loss
-        loss_fn = HeatmapWaypointLoss(device='cpu')
+        loss_fn = HeatmapLoss(device='cpu')
         loss = loss_fn(res, target)
         self.assertIsInstance(loss, torch.Tensor)
 
