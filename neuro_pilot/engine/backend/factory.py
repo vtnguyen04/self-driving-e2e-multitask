@@ -1,4 +1,3 @@
-
 from pathlib import Path
 from typing import Union
 import torch
@@ -13,23 +12,23 @@ class AutoBackend:
     """
     Factory for selecting and instantiating the correct inference backend.
     """
-    def __new__(cls, weights: Union[str, Path, nn.Module], device: torch.device = None, fp16: bool = False, fuse: bool = True) -> BaseBackend:
+    def __new__(cls, weights: Union[str, Path, nn.Module], device: torch.device = None, fp16: bool = False, fuse: bool = False) -> BaseBackend:
 
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # 1. Handle in-memory Module
+        # Handle in-memory Module
         if isinstance(weights, nn.Module):
             return PyTorchBackend(weights, device, fp16, fuse)
 
-        # 2. Handle Paths
+        # Handle Paths
         w = Path(weights)
         if not w.exists():
             raise FileNotFoundError(f"Weights file not found: {w}")
 
         suffix = w.suffix.lower()
 
-        # 3. Select Strategy
+        # Select Strategy
         if suffix in ['.engine', '.plan']:
             logger.info(f"Detected TensorRT engine: {w}")
             return TensorRTBackend(str(w), device, fp16)

@@ -57,7 +57,7 @@ def main():
         print(f"Registered Dynamic Composite Task: {task_arg}")
 
     model = NeuroPilot(args.model, task=task_arg)
-    model.train(epochs=args.epochs, batch_size=args.batch)
+    model.train(max_epochs=args.epochs, batch_size=args.batch)
 
 if __name__ == "__main__":
     main()

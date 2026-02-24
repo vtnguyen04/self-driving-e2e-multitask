@@ -75,7 +75,7 @@ class TensorRTBackend(BaseBackend):
         return torch.float32
 
     def forward(self, im: torch.Tensor, **kwargs) -> Union[torch.Tensor, List[torch.Tensor]]:
-        # 1. Fill Input Buffer (Zero-Copy from torch tensor)
+        # Fill Input Buffer (Zero-Copy from torch tensor)
         # We assume 'im' matches the input binding name 'images' or index 0
         # If the input tensor address changes, we might need to update bindings or copy.
         # For maximum speed, 'im' should be pre-allocated or we copy into the persistent buffer.
@@ -92,10 +92,10 @@ class TensorRTBackend(BaseBackend):
 
         self.bindings[input_name].copy_(im)
 
-        # 2. Execute
+        # Execute
         self.context.execute_v2(self.binding_addrs)
 
-        # 3. Retrieve Outputs
+        # Retrieve Outputs
         # Outputs are already in self.bindings tensors!
         outputs = [self.bindings[name] for name in self.output_names]
 

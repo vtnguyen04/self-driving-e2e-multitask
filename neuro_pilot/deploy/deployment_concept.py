@@ -15,10 +15,10 @@ class CommandSupervisor:
         car_pose: (x, y, yaw) from Localization
         detected_objects: List of signs (STOP, PRIORITY, etc.)
         """
-        # 1. Check for Intersection
+        # Check for Intersection
         dist_to_intersection = self.get_dist_to_next_node(car_pose)
 
-        # 2. State Machine
+        # State Machine
         if self.state == "LANE_FOLLOW":
             cmd = 0 # FOLLOW_LANE
 

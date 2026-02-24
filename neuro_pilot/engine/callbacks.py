@@ -112,6 +112,7 @@ class CheckpointCallback(Callback):
         self.best_fitness = -float('inf')
 
     def on_val_end(self, trainer):
+        if not hasattr(trainer, 'save_checkpoint'): return
         # trainer.fitness should be populated by validator or trainer
         fitness = getattr(trainer, 'fitness', 0.0)
         # Fallback to inverse loss if fitness not defined
@@ -170,12 +171,16 @@ class VisualizationCallback(Callback):
         )
 
     def on_batch_end(self, trainer):
-        # Visualize first 3 batches every epoch to observe progress (overwrites)
+        # Visualize first 3 batches every epoch
         if hasattr(trainer, 'batch_idx') and trainer.batch_idx in (0, 1, 2):
              self.visualize_batch(trainer, trainer.batch_idx, "train")
 
+    def on_val_batch_end(self, validator):
+        # Visualize first 3 batches of validation
+        if hasattr(validator, 'batch_idx') and validator.batch_idx in (0, 1, 2):
+             self.visualize_batch(validator, validator.batch_idx, "val")
+
     def on_val_end(self, trainer):
-        # Could visualize validation samples here if desired
         pass
 
 class PlottingCallback(Callback):
@@ -184,10 +189,15 @@ class PlottingCallback(Callback):
         self.log_dir = log_dir
         import matplotlib.pyplot as plt
         self.plt = plt
-        import pandas as pd
-        self.pd = pd
+        try:
+            import pandas as pd
+            self.pd = pd
+        except ImportError:
+            self.pd = None
 
     def _plot(self):
+        if self.pd is None:
+            return
         # Load CSVs
         train_csv = self.log_dir / "train_metrics.csv"
         val_csv = self.log_dir / "val_metrics.csv"

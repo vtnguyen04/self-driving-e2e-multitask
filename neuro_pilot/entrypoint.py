@@ -69,7 +69,7 @@ def main():
         if args.mode == "train":
             model.train(
                 data=args.data,
-                epochs=args.epochs,
+                max_epochs=args.epochs,
                 batch_size=args.batch,
                 imgsz=args.imgsz,
                 device=args.device

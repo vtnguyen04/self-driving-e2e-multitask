@@ -1,14 +1,14 @@
-
 import cv2
 import numpy as np
 import torch
+import glob
 from pathlib import Path
 from neuro_pilot.data.utils import IMG_FORMATS
 
 VID_FORMATS = 'asf', 'avi', 'gif', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ts', 'wmv', 'webm'
 
 class LoadImages:
-    """Standard image loader for inference."""
+    """image loader for inference."""
     def __init__(self, path, imgsz=640, vid_stride=1):
         p = str(path)
         if "*" in p:
@@ -40,6 +40,7 @@ class LoadImages:
         return self
 
     def __next__(self):
+        # print(f"DEBUG: LoadImages.__next__ called. count={self.count}/{self.nf}")
         if self.count == self.nf:
             raise StopIteration
         path = self.files[self.count]
@@ -77,8 +78,10 @@ class LoadImages:
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     def preprocess(self, img0):
-        img = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (self.imgsz, self.imgsz))
+        from neuro_pilot.data.augment import LetterBox
+        lb = LetterBox(new_shape=self.imgsz, auto=False, scaleup=True)
+        data = lb({'img': img0})
+        img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32) / 255.0
         img = torch.from_numpy(img).permute(2, 0, 1)
         return img
@@ -147,8 +150,10 @@ class LoadStreams:
         return self.sources, torch.stack(images), None, self.caps
 
     def preprocess(self, img0):
-        img = cv2.cvtColor(img0, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (self.imgsz, self.imgsz))
+        from neuro_pilot.data.augment import LetterBox
+        lb = LetterBox(new_shape=self.imgsz, auto=False, scaleup=True)
+        data = lb({'img': img0})
+        img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32) / 255.0
         img = torch.from_numpy(img).permute(2, 0, 1)
         return img
@@ -160,6 +165,7 @@ class LoadTensors:
     """Loader for raw tensors or numpy arrays."""
     def __init__(self, source, imgsz=640):
         self.imgsz = imgsz
+        self.orig = source
         if isinstance(source, np.ndarray):
             if source.ndim == 3:
                 source = source.transpose(2, 0, 1)
@@ -169,6 +175,7 @@ class LoadTensors:
 
         if source.ndim == 3:
             source = source.unsqueeze(0)
+            if isinstance(self.orig, np.ndarray): self.orig = [self.orig]
 
         self.source = source
         self.nf = source.shape[0]
@@ -182,6 +189,7 @@ class LoadTensors:
         if self.count == self.nf:
             raise StopIteration
         img = self.source[self.count]
+        img0 = self.orig[self.count] if isinstance(self.orig, (list, np.ndarray, torch.Tensor)) and len(self.orig) > self.count else None
         self.count += 1
 
         # Resize if needed
@@ -192,7 +200,7 @@ class LoadTensors:
              else:
                   img = F.interpolate(img, size=(self.imgsz, self.imgsz), mode='bilinear', align_corners=False)
 
-        return 'tensor', img, None, None
+        return 'tensor', img, img0, None
 
     def __len__(self):
         return self.nf
