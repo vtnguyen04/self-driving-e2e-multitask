@@ -3,7 +3,7 @@ import torch.nn as nn
 
 class BaseHead(nn.Module):
     """
-    Standard interface for all multi-task heads in NeuroPilot.
+    interface for all multi-task heads in NeuroPilot.
     Strictly follows SOLID principles:
     - S: Single responsibility (handling only head logic)
     - O: Open for extension (via subclassing)

@@ -37,8 +37,8 @@ class CommandGate(nn.Module):
     Predicts a scalar importance weight [0, 1] for the command based on vision features.
 
     Logic:
-    - If scene is simple (straight road), Gate -> 0. Command is suppressed.
-    - If scene is complex (intersection), Gate -> 1. Command is active.
+    - If scene is simple, Gate -> 0.
+    - If scene is complex, Gate -> 1.
     """
     def __init__(self, embed_dim=128):
         super().__init__()
@@ -99,18 +99,15 @@ class VLFusion(nn.Module):
         B, C, H, W = vision.shape
         x_flat = vision.flatten(2).permute(0, 2, 1) # [B, HW, C]
 
-        # 1. Calculate Context Relevance (Gate)
+        # Calculate Context Relevance (Gate)
         gate_score = self.gate(vision) # [B, 1, 1]
 
-        # 2. Cross-Attention
+        # Cross-Attention
         attn_out, _ = self.mha(self.q(x_flat), self.k(lang_feats), self.v(lang_feats))
 
-        # 3. Gated Residual Connection with learnable gain
-        # x_flat = self.norm(x_flat + gate_score * attn_out)
+        # Gated Residual Connection with learnable gain
         x_flat = self.norm(x_flat + self.resid_gain * gate_score * attn_out)
-
-        if torch.isnan(x_flat).any():
-             x_flat = torch.nan_to_num(x_flat, nan=0.0)
+        x_flat = torch.nan_to_num(x_flat, nan=0.0)
 
         vision = x_flat.permute(0, 2, 1).reshape(B, C, H, W)
         return {"feats": vision, "gate_score": gate_score}
@@ -181,7 +178,7 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
             else:
                 indices = indices.view(-1)
         if self.mode == 'clip':
-            # 1. Select Synonyms (Training Augmentation)
+            # Select Synonyms (Training Augmentation)
             if self.training:
                 # Randomly pick a synonym index for each sample in batch
                 syn_idx = torch.randint(0, self.max_synonyms, (indices.shape[0],), device=indices.device)
@@ -190,10 +187,9 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
                 syn_idx = torch.zeros_like(indices)
 
             # Gather semantics: [B, clip_dim]
-            # Advanced indexing to pick specific synonym for each batch item
             raw_embeds = self.cached_embeds[indices, syn_idx]
 
-            # 2. Project to vision dimension
+            # Project to vision dimension
             x = self.projector(raw_embeds) # [B, embed_dim]
         else:
             x = self.embedding(indices) # [B, embed_dim]

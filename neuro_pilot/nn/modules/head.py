@@ -84,52 +84,65 @@ class Detect(BaseHead):
         return dict(boxes=boxes, scores=scores, feats=x)
 
     def forward(self, x: list[torch.Tensor]):
-        preds = self.forward_head(x, **self.one2many)
-        if self.end2end:
-            x_detach = [xi.detach() for xi in x]
-            one2one = self.forward_head(x_detach, **self.one2one)
-            preds = {"one2many": preds, "one2one": one2one}
+        shape = x[0].shape  # BCHW
+        bs = shape[0]
 
-        # Standardized output for multi-task model
-        inner = preds["one2many"] if self.end2end else preds
-        res = {k: v for k, v in inner.items() if k != "feats"}
-        res["feats"] = inner.get("feats")
-        res["one2many"] = inner
-        res["detect"] = preds # Required for DetectionLoss
-
+        # Process each feature map
+        one2many_preds = self.forward_head(x, **self.one2many)
+        
         if self.training:
+            # For training, we return the raw outputs for the loss function
+            res = {"one2many": one2many_preds, "detect": {"one2many": one2many_preds}}
+            if self.end2end:
+                x_detach = [xi.detach() for xi in x]
+                one2one_preds = self.forward_head(x_detach, **self.one2one)
+                res["one2one"] = one2one_preds
+                res["detect"]["one2one"] = one2one_preds
+            
+            # Ensure 'feats' is available for loss calculation
+            res['detect']['feats'] = x
             return res
 
-        # Inference
-        y = self._inference(preds["one2one"] if self.end2end else preds)
-        res.update({"bboxes": y, "one2one": preds.get("one2one")})
+        # INFERENCE
+        # Re-organize raw predictions
+        bs = x[0].shape[0]
+        box_preds = one2many_preds['boxes']
+        score_preds = one2many_preds['scores']
+
+        # Decode boxes
+        if self.dynamic or self.shape != x[0].shape:
+            self.anchors, self.strides = (a.transpose(0, 1) for a in make_anchors(x, self.stride, 0.5))
+            self.shape = x[0].shape
+        
+        # Apply DFL
+        decoded_boxes = self.decode_bboxes(self.dfl(box_preds), self.anchors.unsqueeze(0)) * self.strides.unsqueeze(0)
+
+        y = torch.cat((decoded_boxes, score_preds.sigmoid()), 1)
+
+        # Standardized output
+        res = {
+            "bboxes": y,
+            "boxes": one2many_preds['boxes'],
+            "scores": one2many_preds['scores'],
+            "feats": x,
+        }
         return res
+    
+    def decode_bboxes(self, bboxes, anchors):
+        """Decode bounding boxes from distance format."""
+        return dist2bbox(bboxes, anchors, xywh=True, dim=1)
 
-    def _inference(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
-        dbox = self._get_decode_boxes(x)
-        return torch.cat((dbox, x["scores"].sigmoid()), 1)
-
-    def _get_decode_boxes(self, x: dict[str, torch.Tensor]) -> torch.Tensor:
-        shape = x["feats"][0].shape  # BCHW
-        if self.dynamic or self.shape != shape:
-            self.anchors, self.strides = (a.transpose(0, 1) for a in make_anchors(x["feats"], self.stride, 0.5))
-            self.shape = shape
-        dbox = self.decode_bboxes(self.dfl(x["boxes"]), self.anchors.unsqueeze(0)) * self.strides
-        return dbox
-
-    def decode_bboxes(self, bboxes: torch.Tensor, anchors: torch.Tensor, xywh: bool = True) -> torch.Tensor:
-        return dist2bbox(bboxes, anchors, xywh=xywh and not self.end2end and not self.xyxy, dim=1)
 
     def bias_init(self):
         """Initialize Detect() biases, standard YOLO procedure."""
         for i, (a, b) in enumerate(zip(self.one2many["box_head"], self.one2many["cls_head"])):
-            a[-1].bias.data[:] = 1.0  # box
-            # Standard YOLO bias init: log(freq / (1-freq)) or log(5 / nc / (imgsz/stride)^2)
+            a[-1].bias.data[:] = 2.0  # box (standard Ultralytics)
+            # YOLO bias init: log(freq / (1-freq)) or log(5 / nc / (640 / stride)^2)
             # This ensures confidence starts very low (~0.01)
             b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
         if self.end2end:
             for i, (a, b) in enumerate(zip(self.one2one["box_head"], self.one2one["cls_head"])):
-                a[-1].bias.data[:] = 1.0
+                a[-1].bias.data[:] = 2.0
                 b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
 
 class v10Detect(Detect):
@@ -148,46 +161,87 @@ class v10Detect(Detect):
         self.one2one_cv3 = copy.deepcopy(self.cv3)
 
 class HeatmapHead(BaseHead):
-    """
-    Head for generating heatmap logits.
-    Inputs: [p3, c2] where p3 is high-level features and c2 is low-level features from backbone.
+    """Full-resolution heatmap decoder with progressive upsampling.
+
+    Inputs: [p3, c2] where p3 is high-level features (stride 8) and c2 is
+    low-level features from backbone (stride 4).
+
+    Architecture (num_upsample=3, full resolution):
+        Stage 1: P3 (stride 8) ──upsample×2──→ fuse with gated C2 → stride 4
+        Stage 2: stride 4 ──ConvTranspose×2──→ C3k2 refine → stride 2
+        Stage 3: stride 2 ──ConvTranspose×2──→ Conv refine → stride 1
+
+    Args:
+        ch_in: list of [p3_channels, c2_channels]
+        ch_out: number of output channels (1 for single heatmap)
+        hidden_dim: internal channel width
+        num_upsample: number of ×2 upsample stages (1=stride 4, 2=stride 2, 3=stride 1)
     """
     head_name = "heatmap"
-    def __init__(self, ch_in, ch_out=1, hidden_dim=64):
-        super().__init__()
-        # ch_in: [p3_dim, c2_dim]
-        c3_dim, c2_dim = ch_in[0], ch_in[1]
 
+    def __init__(self, ch_in, ch_out=1, hidden_dim=64, num_upsample=3):
+        super().__init__()
+        c3_dim = ch_in[0] if isinstance(ch_in, (list, tuple)) else ch_in
+        c2_dim = ch_in[1] if isinstance(ch_in, (list, tuple)) and len(ch_in) > 1 else c3_dim
+        self.num_upsample = num_upsample
+
+        # Stage 1: P3 (stride 8) → stride 4 with C2 skip connection
         self.gate_c2 = AttentionGate(F_g=c3_dim, F_l=c2_dim, F_int=hidden_dim)
         self.up_p3_to_p2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-            Conv(c3_dim, hidden_dim, 3, 1)
+            Conv(c3_dim, hidden_dim, 3, 1),
         )
-        self.fuse_c2 = C3k2(hidden_dim + c2_dim, hidden_dim, n=1)
+        self.fuse_s1 = C3k2(hidden_dim + c2_dim, hidden_dim, n=1)
 
+        # Stage 2: stride 4 → stride 2 (learned upsample + refine)
+        if num_upsample >= 2:
+            self.up_s2 = nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, kernel_size=2, stride=2)
+            self.refine_s2 = C3k2(hidden_dim // 2, hidden_dim // 2, n=1)
+            s2_out = hidden_dim // 2
+        else:
+            s2_out = hidden_dim
+
+        # Stage 3: stride 2 → stride 1 (learned upsample + lightweight refine)
+        if num_upsample >= 3:
+            self.up_s3 = nn.ConvTranspose2d(s2_out, s2_out // 2, kernel_size=2, stride=2)
+            self.refine_s3 = nn.Sequential(Conv(s2_out // 2, s2_out // 2, 3, 1))
+            final_ch = s2_out // 2
+        else:
+            final_ch = s2_out
+
+        # Output: 1×1 conv producing logits (no activation)
         self.head = nn.Sequential(
-            Conv(hidden_dim, 32, 3, 1),
-            nn.Conv2d(32, ch_out, 1)
+            Conv(final_ch, max(final_ch // 2, 16), 3, 1),
+            nn.Conv2d(max(final_ch // 2, 16), ch_out, 1),
         )
 
     def forward(self, x):
-        if isinstance(x, list):
-            p3, c2 = x[0], x[1]
+        if isinstance(x, (list, tuple)):
+            p3 = x[0]
+            c2 = x[1] if len(x) > 1 else x[0]
         else:
-            p3, c2 = x, x
+            p3 = c2 = x
 
-        # Attention Gating
+        # Stage 1: P3→stride 4, gated skip with C2
         gated_c2 = self.gate_c2(p3, c2)
-
-        # Upsample P3 and Fuse
         p3_up = self.up_p3_to_p2(p3)
-        h2 = self.fuse_c2(torch.cat([p3_up, gated_c2], dim=1))
+        h = self.fuse_s1(torch.cat([p3_up, gated_c2], dim=1))
 
-        return {"heatmap": self.head(h2)}
+        # Stage 2: stride 4→stride 2
+        if self.num_upsample >= 2:
+            h = F.silu(self.up_s2(h))
+            h = self.refine_s2(h)
+
+        # Stage 3: stride 2→stride 1
+        if self.num_upsample >= 3:
+            h = F.silu(self.up_s3(h))
+            h = self.refine_s3(h)
+
+        return {"heatmap": self.head(h)}
 
 class TrajectoryHead(BaseHead):
     """
-    Professional Trajectory Head using Bezier Curves (Bernstein Basis).
+    Trajectory Head using Bezier Curves (Bernstein Basis).
     Uses FiLM for command modulation and predicts 4 control points.
     """
     forward_with_kwargs = True
@@ -205,10 +259,10 @@ class TrajectoryHead(BaseHead):
             nn.Linear(256, 1024) # 512 for gamma, 512 for beta
         )
 
-        # Spatial Awareness Pool
-        self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4))
+        # Spatial Awareness Pool - Use interpolate for better ONNX compatibility
+        # self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4))
         flatten_dim = self.c5_dim * 4 * 4
-        
+
         # STEM: Concatenate command embedding initially
         self.vision_stem = nn.Sequential(
             nn.Linear(flatten_dim + 64, 512),
@@ -244,7 +298,7 @@ class TrajectoryHead(BaseHead):
         B = p5.shape[0]
         if cmd_idx is None: cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
 
-        # 1. Feature Integration with Heatmap (Residual)
+        # Feature Integration with Heatmap (Residual)
         if heatmap is not None:
             if isinstance(heatmap, dict): heatmap = heatmap.get('heatmap')
             mask = F.interpolate(torch.sigmoid(heatmap), size=p5.shape[2:], mode='bilinear', align_corners=False)
@@ -252,37 +306,36 @@ class TrajectoryHead(BaseHead):
         else:
             feat = p5
 
-        # 2. Vision + Command Concatenation
-        pooled = self.spatial_pool(feat).flatten(1)
-        
+        # Vision + Command Concatenation
+        # Using F.interpolate for better ONNX compatibility
+        pooled = F.interpolate(feat, size=(4, 4), mode='bilinear', align_corners=False).flatten(1)
+
         # Ensure cmd_idx is 1D [B] even if passed as [B, 1] or one-hot
         if cmd_idx.dim() > 1:
             if cmd_idx.shape[-1] == self.num_commands: # One-hot
                 cmd_idx = cmd_idx.argmax(dim=-1)
             else:
                 cmd_idx = cmd_idx.view(-1)
-                
+
         cmd_emb = self.cmd_embed(cmd_idx.long())
         combined = torch.cat([pooled, cmd_emb], dim=1) # [B, flatten_dim + 64]
 
         # 2.5 STEM processing
         h = self.vision_stem(combined) # [B, 512]
 
-        # 3. FiLM Modulation (Strong Command Awareness)
+        # FiLM Modulation (Strong Command Awareness)
         film_params = self.film_gen(cmd_emb)
         gamma, beta = film_params.chunk(2, dim=1) # [B, 512], [B, 512]
         h = h * (1 + gamma) + beta
 
-        # 4. Predict Control Points
+        # Predict Control Points
         cp = torch.tanh(self.traj_head(h)).view(B, 4, 2)
 
-        # 5. Bezier Interpolation (Bernstein)
-        # cp: [B, 4, 2], self.bernstein_m: [T, 4]
-        # Use einsum: b=batch, n=time(T), k=control_point(4), d=dim(2)
+        # Bezier Interpolation (Bernstein)
         waypoints = torch.einsum('nk,bkd->bnd', self.bernstein_m, cp)
 
         # Safety
-        if torch.isnan(waypoints).any(): waypoints = torch.nan_to_num(waypoints, 0.0)
+        waypoints = torch.nan_to_num(waypoints, 0.0)
 
         res = {'waypoints': waypoints, 'control_points': cp}
         return {'trajectory': res, **res}
@@ -324,7 +377,7 @@ class Segment(Detect):
         proto = self.proto(x[0])
         preds = super().forward(x)
 
-        # Inject proto into standardized output
+        # Inject proto into output
         if self.end2end:
             preds["one2many"]["proto"] = proto
             preds["one2one"]["proto"] = proto.detach()
@@ -338,7 +391,7 @@ class Segment(Detect):
 
 class ClassificationHead(nn.Module):
     """
-    Standard Classification Head for global attributes.
+    Classification Head for global attributes.
     """
     def __init__(self, ch, nc, hidden_dim=256, dropout=0.0):
         super().__init__()

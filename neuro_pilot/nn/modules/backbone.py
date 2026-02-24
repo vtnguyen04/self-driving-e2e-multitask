@@ -13,15 +13,37 @@ class TimmBackbone(nn.Module):
         super().__init__()
         try:
             self.model = timm.create_model(model_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
-        except (RuntimeError, ValueError) as e:
-            logger.warning(f"Failed to create timm model '{model_name}' with pretrained={pretrained}. Retrying without tag or fallback. Error: {e}")
-            # Try removing the tag (after the last '.')
+        except Exception as e:
+            logger.warning(f"Failed to create timm model '{model_name}' (pretrained={pretrained}). Error: {e}")
+
+            # Retry without pretrained weights (Internet/Weight issue)
+            if pretrained:
+                logger.info(f"Retrying '{model_name}' with pretrained=False...")
+                try:
+                    self.model = timm.create_model(model_name, pretrained=False, features_only=features_only, out_indices=out_indices)
+                    logger.info(f"Successfully created '{model_name}' (Random Weights).")
+                    return # Success
+                except Exception as e2:
+                    logger.error(f"Failed to create model even with pretrained=False. Error: {e2}")
+
+            # Retry stripping tag if applicable (e.g. .e2400_r224_in1k)
             base_name = model_name.split('.')[0]
-            try:
-                self.model = timm.create_model(base_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
-            except:
-                logger.error(f"Fallback failed for '{base_name}'. Using mock/fallback architecture.")
-                raise e
+            if base_name != model_name:
+                logger.info(f"Retrying with base name '{base_name}'...")
+                try:
+                    self.model = timm.create_model(base_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
+                    return
+                except:
+                     # One last try with base name and no pretrained
+                     if pretrained:
+                         try:
+                             self.model = timm.create_model(base_name, pretrained=False, features_only=features_only, out_indices=out_indices)
+                             return
+                         except:
+                             pass
+
+            raise RuntimeError(f"Could not create timm model '{model_name}'. Check installation and model name.")
+
         self.feature_info = self.model.feature_info
 
     @staticmethod
@@ -37,21 +59,11 @@ class TimmBackbone(nn.Module):
             return [64, 128, 256, 512, 1024] # Generic fallback
 
     def forward(self, x):
-        out = self.model(x)
-        # Handle mock objects in restricted environments without explicit import
-        if out.__class__.__name__ == 'MagicMock':
-             # Return dummy feature list based on out_indices if possible, else generic
-             # Synced with get_channels('mobilenetv4_conv_small') -> [32, 32, 64, 96, 960]
-             return [torch.zeros(x.shape[0], 32, x.shape[2]//2, x.shape[3]//2),
-                     torch.zeros(x.shape[0], 32, x.shape[2]//4, x.shape[3]//4),
-                     torch.zeros(x.shape[0], 64, x.shape[2]//8, x.shape[3]//8),
-                     torch.zeros(x.shape[0], 96, x.shape[2]//16, x.shape[3]//16),
-                     torch.zeros(x.shape[0], 960, x.shape[2]//32, x.shape[3]//32)]
-        return out
+        return self.model(x)
 
 class NeuroPilotBackbone(nn.Module):
     """
-    Standard NeuroPilot Shared Backbone (timm + PANet + Prompting).
+    Shared Backbone (timm + PANet + Prompting).
     Optimized for multi-task composite architectures.
     """
     forward_with_kwargs = True
@@ -59,7 +71,8 @@ class NeuroPilotBackbone(nn.Module):
     def get_channels(model_name):
         # Maps keys to channels for NeuroPilotBackbone
         if 'small' in model_name:
-            return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 32, 'gate_score': 1}
+            return {'p3': 64, 'p4': 64, 'p5': 64, 'c2': 32, 'gate_score': 1}
+        # Medium and others
         return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 48, 'gate_score': 1}
 
     def __init__(self, backbone_name='mobilenetv4_conv_medium', num_commands=4, dropout_prob=0.0):
@@ -69,7 +82,15 @@ class NeuroPilotBackbone(nn.Module):
 
         # Stride 4, 8, 16, 32
         self.c2_dim, self.c3_dim, self.c4_dim, self.c5_dim = feat_info[1], feat_info[2], feat_info[3], feat_info[4]
-        self.neck_dim = 128
+
+        # Store actual channels for dynamic discovery
+        self.output_channels = {'p3': 64 if 'small' in backbone_name else 128,
+                                'p4': 64 if 'small' in backbone_name else 128,
+                                'p5': 64 if 'small' in backbone_name else 128,
+                                'c2': self.c2_dim,
+                                'gate_score': 1}
+
+        self.neck_dim = 64 if 'small' in backbone_name else 128
 
         self.sppf = SPPF(self.c5_dim, self.neck_dim)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
