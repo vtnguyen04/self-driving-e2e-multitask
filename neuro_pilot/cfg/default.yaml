@@ -3,11 +3,11 @@
 # Aligned with Ultralytics standards (Architecture vs. Training separation).
 
 loss:
-  lambda_det: 1.0     # Detection loss multiplier
-  lambda_traj: 0.05   # Trajectory loss multiplier
-  lambda_heatmap: 1.0 # Heatmap loss multiplier
+  lambda_det: 2.5     # Detection loss multiplier (from debug script)
+  lambda_traj: 7.5   # Trajectory loss multiplier (from debug script)
+  lambda_heatmap: 10.0 # Heatmap loss multiplier (from debug script)
   lambda_smooth: 0.1  # Smoothness loss multiplier
-  lambda_cls: 0.5     # Classification loss multiplier
+  lambda_cls: 1.0     # Classification loss multiplier (from debug script)
   lambda_gate: 0.5    # Command gating loss multiplier
 
 trainer:
@@ -26,7 +26,7 @@ trainer:
   experiment_name: "default"
 
 data:
-  image_size: 224
+  image_size: 320
   batch_size: 32
   num_workers: 4
   augment:
@@ -45,3 +45,6 @@ data:
     copy_paste: 0.0
     noise_prob: 0.4
     blur_prob: 0.1
+
+head:
+  skip_heatmap_inference: False

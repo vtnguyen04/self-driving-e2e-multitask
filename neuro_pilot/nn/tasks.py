@@ -7,33 +7,21 @@ from neuro_pilot.utils.logger import logger
 from neuro_pilot.nn.modules import *
 from neuro_pilot.nn.modules.head import ClassificationHead
 
-class Concat(nn.Module):
-    """Concatenate a list of tensors along dimension."""
-    def __init__(self, dimension=1):
-        super().__init__()
-        self.d = dimension
 
-    def forward(self, x):
-        return torch.cat(x, self.d)
-
-def initialize_weights(model):
-    """Initialize model weights to professional standards, skipping specialized heads."""
-    for m in model.modules():
-        t = type(m)
-        if t is nn.Conv2d:
-            pass # Standard init handled by layers or specialized heads
-        elif t is nn.BatchNorm2d:
-            m.eps = 1e-3
-            m.momentum = 0.03
-        elif t in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU]:
-            m.inplace = True
 
 def parse_model(d, ch):
     """Parse a NeuroPilot model dict into a PyTorch model."""
     logger.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
-    # Scaling factors: depth_multiple (gd), width_multiple (gw)
-    gd = d.get("depth_multiple", 1.0)
-    gw = d.get("width_multiple", 1.0)
+    scale = d.get('scale', 'n') # Default to 'n' if not specified
+    if 'scales' in d:
+        if scale not in d['scales']:
+            logger.warning(f"Scale '{scale}' not found in yaml. Using 'n'. Available: {list(d['scales'].keys())}")
+            scale = 'n'
+        gd, gw, max_ch = d['scales'][scale]
+        logger.info(f"YOLO-style Scaling: scale='{scale}', depth={gd}, width={gw}, max_ch={max_ch}")
+    else:
+        gd = d.get("depth_multiple", 1.0)
+        gw = d.get("width_multiple", 1.0)
     nc, nm, nw = d["nc"], d.get("nm"), d.get("nw")
 
     layers, save, c2 = [], [], ch  # layers, savelist, ch out
@@ -63,19 +51,38 @@ def parse_model(d, ch):
              if len(args) == 2: args = [None, args[0], args[1]]
         elif m is TimmBackbone:
              model_name = args[0]
+
+             # Dynamic Backbone Selection based on Scale
+             # To meet user expectations (e.g. Small ~10M params), we switch backbone variants.
+             if 'mobilenetv4' in model_name:
+                 if scale == 'n':
+                     model_name = 'mobilenetv4_conv_small.e2400_r224_in1k'
+                 elif scale == 's':
+                     # Medium backbone -> ~10M params with head
+                     model_name = 'mobilenetv4_conv_medium.e500_r224_in1k'
+                 elif scale in ['m', 'l', 'x']:
+                     # Large backbone -> ~30M+ params
+                     model_name = 'mobilenetv4_conv_large.e600_r224_in1k'
+
+                 args[0] = model_name
+
              c2 = m.get_channels(model_name)
         elif m is NeuroPilotBackbone:
              model_name = args[0]
              c2 = m.get_channels(model_name)
         elif m is SelectFeature:
              idx = args[0]
-             backbone_ch = ch[f]
-             if isinstance(backbone_ch, dict):
-                 c2 = backbone_ch[idx]
-             elif isinstance(backbone_ch, (list, tuple)):
-                 c2 = backbone_ch[idx]
+             backbone_module = layers[f]
+             if hasattr(backbone_module, 'output_channels'):
+                 c2 = backbone_module.output_channels[idx]
              else:
-                 c2 = backbone_ch
+                 backbone_ch = ch[f]
+                 if isinstance(backbone_ch, dict):
+                     c2 = backbone_ch[idx]
+                 elif isinstance(backbone_ch, (list, tuple)):
+                     c2 = backbone_ch[idx]
+                 else:
+                     c2 = backbone_ch
         elif m in {Detect, Segment, HeatmapHead, TrajectoryHead, ClassificationHead}:
              c2 = ch[f[0]] if isinstance(f, list) else ch[f]
              ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
@@ -86,6 +93,20 @@ def parse_model(d, ch):
                  if len(args) > 3 and args[3] == "npr": args[3] = d.get("npr", 256)
         elif m is Concat:
              c2 = sum(ch[x] for x in f)
+        elif m is VLFusion:
+             # args: [c1_hint, c2_hint, heads] in yaml.
+             # Auto-derive from inputs: f=[vision_idx, lang_idx]
+             vision_ch = ch[f[0]]
+             lang_ch = ch[f[1]]
+             heads = args[2] if len(args) > 2 else 4
+             args = [vision_ch, lang_ch, heads]
+             c2 = vision_ch
+        elif m is LanguagePromptEncoder:
+             # args: [embed_dim, num_prompts, mode]
+             # Scale embed_dim (args[0])
+             c2 = args[0]
+             c2 = make_divisible(c2 * gw, 8)
+             args[0] = c2
         else:
              c2 = ch[f] if isinstance(f, int) else ch[f[0]]
 
@@ -107,15 +128,19 @@ def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor
 
 class DetectionModel(nn.Module):
-    """Standard NeuroPilot Detection Model."""
-    def __init__(self, cfg="yolo_style.yaml", ch=3, nc=None, verbose=True):
+    """Detection Model."""
+    def __init__(self, cfg="yolo_style.yaml", ch=3, nc=None, scale='n', verbose=True, skip_heatmap_inference=False):
         super().__init__()
+        self.skip_heatmap_inference = skip_heatmap_inference
         if isinstance(cfg, dict):
             self.yaml = cfg
         else:
             import yaml
             with open(cfg, encoding="ascii", errors="ignore") as f:
                 self.yaml = yaml.safe_load(f)
+
+        # Inject scale choice
+        self.yaml['scale'] = scale
 
         # Define model
         ch = self.yaml["ch"] = self.yaml.get("ch", ch)
@@ -137,7 +162,7 @@ class DetectionModel(nn.Module):
 
         self.heads = nn.ModuleDict({k: self.model[i] for k, i in self.head_indices.items()})
 
-        # 2. Stride computation (if Detect head present)
+        # Stride computation (if Detect head present)
         idx = self.head_indices.get("detect")
         if idx is not None:
             m = self.model[idx]
@@ -154,15 +179,28 @@ class DetectionModel(nn.Module):
             self.stride = m.stride
             self.train()
 
-        # 3. Professional Initialization
+        # Initialization
+        self._initialize_weights()
+
         # We only call bias_init on heads that need it (like Detect)
-        # and rely on default kaiming/timm init for the rest to ensure stability.
-        for m in self.heads:
-            if hasattr(m, 'bias_init'):
+        for m in self.heads.values():
+            if hasattr(m, "bias_init"):
                 m.bias_init()
 
         if verbose:
             self.info()
+
+    def _initialize_weights(self):
+        """Initialize model weights, biases, and module settings to Ultralytics defaults."""
+        for m in self.modules():
+            t = type(m)
+            if t is nn.Conv2d:
+                pass  # init already handled or not needed for pretrained
+            elif t is nn.BatchNorm2d:
+                m.eps = 1e-3
+                m.momentum = 0.03
+            elif t in {nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU}:
+                m.inplace = True
 
     def info(self, verbose=True, img_size=640):
         """Print model information."""
@@ -172,55 +210,68 @@ class DetectionModel(nn.Module):
         n_l = len(list(self.modules())) # All modules including subs
         logger.info(f"Model Summary: {len(self.model)} layers, {n_p} parameters, {n_g} gradients")
 
+    @staticmethod
+    def _unwrap_input(val, module):
+        """Unwrap dict/tuple outputs into the tensor(s) the module expects.
+
+        Rules:
+            - SelectFeature: pass through raw (it handles dicts/lists internally)
+            - Multi-input heads (Concat, Detect, HeatmapHead): pass as list
+            - Single-input modules: unwrap dicts via 'feats', tuples via [0]
+        """
+        if isinstance(module, SelectFeature):
+            return val  # SelectFeature handles dicts/lists itself
+        if isinstance(val, dict):
+            return val.get("feats", val)
+        return val
+
     def forward(self, *args, **kwargs):
         x = args[0]
         if len(args) > 1:
             kwargs['cmd'] = args[1]
-        y, _dt = [], []
-        saved_outputs = {}
-        for m in self.model:
-            # 1. Unpack input 'x' if it's a structural output from previous layer
-            input_x = x
-            if isinstance(x, dict) and "feats" in x:
-                input_x = x["feats"]
-            elif isinstance(x, (tuple, list)) and not isinstance(m, (Concat, Detect, HeatmapHead, TrajectoryHead)):
-                input_x = x[0]
 
-            # 2. Gather inputs if from multiple layers
-            if m.f != -1:
-                # Resolve list of indices to actual tensors
-                if isinstance(m.f, int):
-                    input_x = y[m.f]
-                    # Unpack if dict/tuple
-                    if isinstance(input_x, dict) and "feats" in input_x:
-                        input_x = input_x["feats"]
-                    elif isinstance(input_x, (list, tuple)) and not isinstance(m, (Concat, Detect, HeatmapHead, TrajectoryHead, SelectFeature, VLFusion)):
-                        input_x = input_x[0]
-                else:
-                    input_x = []
-                    for j in m.f:
-                        val = x if j == -1 else y[j]
-                        # Handle dicts in collected inputs
-                        if isinstance(val, dict) and "feats" in val:
-                            val = val["feats"]
-                        input_x.append(val)
+        y = []            # per-layer outputs for 'from' references
+        outputs = {}      # accumulated task-head outputs (heatmap, gate_score, etc.)
 
-            # 2.5 Ensure x is a list for heads that expect it, even if single input
-            if isinstance(m, (Detect, HeatmapHead)) and not isinstance(input_x, list):
-                input_x = [input_x]
+        for i, m in enumerate(self.model):
+            # Resolve input from 'from' indices
+            if m.f == -1:
+                xi = x
+            elif isinstance(m.f, int):
+                xi = y[m.f]
+            else:
+                xi = [y[j] if j != -1 else x for j in m.f]
 
-            # 3. Call module
-            x = m(input_x, **kwargs) if hasattr(m, 'forward_with_kwargs') else m(input_x)
+            # Unwrap — convert dicts/tuples into what the module expects
+            if isinstance(xi, list):
+                xi = [self._unwrap_input(v, m) for v in xi]
+            else:
+                xi = self._unwrap_input(xi, m)
 
-            # 4. Save output for future 'from' references
-            y.append(x if m.i in self.save else None)
+            # Ensure list input for multi-scale heads
+            if isinstance(m, (Detect, HeatmapHead)) and not isinstance(xi, list):
+                xi = [xi]
 
-            # 5. Capture task-specific outputs for the final dictionary
-            if isinstance(x, dict):
-                saved_outputs.update(x)
+            # Skip HeatmapHead if in inference mode and skip_heatmap_inference is True
+            if not self.training and self.skip_heatmap_inference and isinstance(m, HeatmapHead):
+                y.append(None)
+                continue
 
-        # Unpack final 'feats' for top-level return if needed
-        return saved_outputs if saved_outputs else (x["feats"] if isinstance(x, dict) and "feats" in x else x)
+            # Call module — inject accumulated outputs for kwarg-aware modules
+            if getattr(m, 'forward_with_kwargs', False):
+                xi = m(xi, **{**kwargs, **outputs})
+            else:
+                xi = m(xi)
+
+            # Collect task outputs from dict-returning heads
+            if isinstance(xi, dict):
+                outputs.update(xi)
+
+            # Save output for 'from' references and advance
+            y.append(xi if m.i in self.save else None)
+            x = xi
+
+        return outputs if outputs else x
 
 # Diagnostic helper for parse_model
 # logger.info(f"DEBUG: Found head type {t}")

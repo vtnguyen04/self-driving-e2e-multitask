@@ -80,7 +80,7 @@ from neuro_pilot.utils.torch_utils import load_checkpoint
 @TaskRegistry.register("multitask")
 class MultiTask(BaseTask):
     """
-    Standard E2E Multitask (Detection + Trajectory + Heatmap).
+    E2E Multitask (Detection + Trajectory + Heatmap).
     """
     def __init__(self, cfg, overrides=None, backbone=None):
         super().__init__(cfg, overrides, backbone)
@@ -96,33 +96,22 @@ class MultiTask(BaseTask):
                  logger.warning(f"Failed to load names from {self.cfg.data.dataset_yaml}: {e}")
 
     def build_model(self) -> nn.Module:
-        # 1. Dynamic YAML Architecture
+        # Dynamic YAML Architecture
+        from neuro_pilot.nn.tasks import DetectionModel
         model_cfg = self.overrides.get('model_cfg')
+        skip_heatmap = self.overrides.get('skip_heatmap_inference', self.cfg.head.skip_heatmap_inference)
+
         if model_cfg and str(model_cfg).endswith(('.yaml', '.yml')):
-             from neuro_pilot.nn.tasks import DetectionModel
-             model = DetectionModel(cfg=model_cfg, ch=3, nc=self.cfg.head.num_classes)
+             model = DetectionModel(cfg=model_cfg, ch=3, nc=self.cfg.head.num_classes, skip_heatmap_inference=skip_heatmap)
+             model.names = self.names
              self.model = model
              return model
 
-        # 2. Backbone-driven Composition
-        if self.backbone:
-             from neuro_pilot.engine.composite import CompositeModel
-             from neuro_pilot.nn.modules import Detect, TrajectoryHead, HeatmapHead
-
-             # Composite standard multi-task heads
-             heads = {
-                 'detect': Detect(nc=self.cfg.head.num_classes, ch=(128, 128, 128)),
-                 'trajectory': TrajectoryHead(c1=128, num_waypoints=self.cfg.head.num_waypoints),
-                 'heatmap': HeatmapHead(c1=[128, 128], ch_out=1)
-             }
-             self.model = CompositeModel(self.backbone, heads)
-             return self.model
-
-        # 3. Dynamic Fallback Architecture
-        dropout_prob = self.overrides.get('dropout', getattr(self.cfg.trainer, 'cmd_dropout_prob', 0.0))
+        # Default dynamic template
         model = DetectionModel(
-            cfg="neuro_pilot/cfg/models/yolo_style.yaml", # Default dynamic template
+            cfg="neuro_pilot/cfg/models/yolo_style.yaml",
             nc=self.cfg.head.num_classes,
+            skip_heatmap_inference=skip_heatmap,
             verbose=False
         )
         self.model = model
@@ -152,4 +141,6 @@ class MultiTask(BaseTask):
         return v
 
     def load_weights(self, weights_path: Union[str, Path]):
+         if self.model is None:
+              self.build_model()
          load_checkpoint(weights_path, self.model)

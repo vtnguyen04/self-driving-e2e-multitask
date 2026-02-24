@@ -5,25 +5,25 @@ nc: 14 # number of classes
 # Model Architecture
 backbone:
   # Using the NeuroPilotBackbone which includes Multi-Modal Fusion (VLFusion)
-  - [-1, 1, NeuroPilotBackbone, ['mobilenetv4_conv_medium', 4]] # 0 - Returns {p3, p4, p5, c2, gate_score}
+  - [-1, 1, NeuroPilotBackbone, ['mobilenetv4_conv_small', 4]] # 0 - Returns {p3, p4, p5, c2, gate_score}
 
 head:
-  # 1. Detection (Stride 8, 16, 32)
+  # Detection (Stride 8, 16, 32)
   - [0, 1, SelectFeature, 'p3'] # 1 - p3
   - [0, 1, SelectFeature, 'p4'] # 2 - p4
   - [0, 1, SelectFeature, 'p5'] # 3 - p5
   - [[1, 2, 3], 1, Detect, [nc]] # 4
 
-  # 2. Heatmap (Stride 4)
+  # Heatmap (Stride 4)
   - [0, 1, SelectFeature, 'p3'] # 5 - p3
   - [0, 1, SelectFeature, 'c2'] # 6 - c2
-  - [[5, 6], 1, HeatmapHead, [1, 64]] # 7
+  - [[5, 6], 1, HeatmapHead, [1, 32, 2]] # 7 - ch_out=1, hidden=32, num_upsample=2 (stride 2)
 
-  # 3. Trajectory
+  # Trajectory
   - [0, 1, SelectFeature, 'p5'] # 8 - p5
   - [7, 1, SelectFeature, 'heatmap'] # 9
   - [[8, 9], 1, TrajectoryHead, [4, 10]] # 10
 
-  # 4. Classification (Auxiliary)
+  # Classification (Auxiliary)
   - [0, 1, SelectFeature, 'p5'] # 11 - p5
   - [11, 1, ClassificationHead, [4, 256, 0.1]] # 12 - Command recognition (4 classes)
