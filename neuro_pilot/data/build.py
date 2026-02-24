@@ -51,7 +51,7 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=None, drop_last=False, pin_memory=True, collate_fn=None):
-    """Professional dataloader factory supporting high-performance training.
+    """Dataloader factory supporting training.
 
     Args:
         dataset: Dataset or Subset to load from.

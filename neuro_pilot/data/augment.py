@@ -80,16 +80,24 @@ class Mosaic:
             padw = x1a - x1b
             padh = y1a - y1b
 
-            # Update BBoxes
+            # Update BBoxes (with clipping to mosaic canvas)
             if "bboxes" in patch and len(patch["bboxes"]):
                 boxes = patch["bboxes"].copy()
                 boxes[:, [0, 2]] += padw
                 boxes[:, [1, 3]] += padh
-                mosaic_bboxes.append(boxes)
-                mosaic_cls.append(patch["cls"])
+                # Clip to 2*s (mosaic canvas)
+                boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, 2 * s)
+                boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, 2 * s)
+                # Filter out degenerate boxes
+                w_box = boxes[:, 2] - boxes[:, 0]
+                h_box = boxes[:, 3] - boxes[:, 1]
+                keep = (w_box > 1) & (h_box > 1)
+                if keep.any():
+                    mosaic_bboxes.append(boxes[keep])
+                    mosaic_cls.append(patch["cls"][keep])
 
             # Update Waypoints
-            if has_waypoints and "waypoints" in patch:
+            if "waypoints" in patch and len(patch["waypoints"]) > 0:
                 wp = patch["waypoints"].copy()
                 wp[..., 0] += padw
                 wp[..., 1] += padh
@@ -103,7 +111,7 @@ class Mosaic:
         labels["img"] = img4
         if mosaic_bboxes:
             labels["bboxes"] = np.concatenate(mosaic_bboxes, 0)
-            labels["categories"] = np.concatenate(mosaic_cls, 0)
+            labels["cls"] = np.concatenate(mosaic_cls, 0)
         if mosaic_waypoints:
             labels["waypoints"] = mosaic_waypoints[0] # Usually only keep the primary path
 
@@ -148,48 +156,50 @@ class LetterBox(BaseTransform):
         else:
             new_shape = self.new_shape
 
+        # Scale ratio (new / old)
         r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
-        if not self.scaleup:
+        if not self.scaleup:  # only scale down, do not scale up (for optimization)
             r = min(r, 1.0)
 
-        ratio = r, r
+        # Compute padding
         new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
-        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]
-        if self.auto:
+        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+        if self.auto:  # minimum rectangle
             dw, dh = np.mod(dw, self.stride), np.mod(dh, self.stride)
-        elif self.scaleFill:
-            dw, dh = 0.0, 0.0
+        elif self.scaleFill:  # stretch
             new_unpad = (new_shape[1], new_shape[0])
-            ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]
+            dw, dh = 0.0, 0.0
 
-        dw /= 2
+        dw /= 2  # divide padding into 2 sides
         dh /= 2
 
-        if shape[::-1] != new_unpad:
+        if shape[::-1] != new_unpad:  # resize
             img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
 
         top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-        img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.color)
+        img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.color)  # add border
 
         labels["img"] = img
-        if "bboxes" in labels:
-            labels["bboxes"][:, [0, 2]] *= ratio[0]
-            labels["bboxes"][:, [1, 3]] *= ratio[1]
-            labels["bboxes"][:, [0, 2]] += left
-            labels["bboxes"][:, [1, 3]] += top
+        # Update BBoxes (Assumed to be in PIXELS [x1, y1, x2, y2])
+        if "bboxes" in labels and len(labels["bboxes"]):
+            bboxes = np.array(labels["bboxes"])
+            bboxes[:, [0, 2]] = bboxes[:, [0, 2]] * r + left
+            bboxes[:, [1, 3]] = bboxes[:, [1, 3]] * r + top
+            labels["bboxes"] = bboxes
 
-        if "waypoints" in labels:
-             labels["waypoints"][..., 0] *= ratio[0]
-             labels["waypoints"][..., 1] *= ratio[1]
-             labels["waypoints"][..., 0] += left
-             labels["waypoints"][..., 1] += top
+        # Update Waypoints (Assumed to be in PIXELS [x, y])
+        if "waypoints" in labels and len(labels["waypoints"]):
+            waypoints = np.array(labels["waypoints"])
+            waypoints[..., 0] = waypoints[..., 0] * r + left
+            waypoints[..., 1] = waypoints[..., 1] * r + top
+            labels["waypoints"] = waypoints
 
         return labels
 
 class StandardAugmentor(BaseTransform):
     """
-    Standard NeuroPilot Augmentation Suite using Albumentations.
+    Augmentation Suite using Albumentations.
     Unified from legacy dataset_v2.py.
     """
     def __init__(self, training: bool = True, imgsz: int = 640, config=None):
@@ -197,7 +207,6 @@ class StandardAugmentor(BaseTransform):
         self.training = training
         self.imgsz = imgsz
 
-        # Default config if none provided (Fallbacks)
         if config is None:
             # Create a dummy object with default values if schema not available or simple init
             class DummyConfig:
@@ -212,9 +221,12 @@ class StandardAugmentor(BaseTransform):
                 color_jitter = 0.3
                 noise_prob = 0.4  # Increased noise
                 blur_prob = 0.1
+                mosaic = 1.0  # Default mosiac probability
             cfg = DummyConfig()
         else:
             cfg = config
+
+        self.mosaic_prob = getattr(cfg, 'mosaic', 1.0) if training else 0.0
 
         if training:
             # Use Config values
@@ -246,27 +258,39 @@ class StandardAugmentor(BaseTransform):
                 A.OneOf([A.MotionBlur(blur_limit=5, p=1.0), A.GaussianBlur(blur_limit=(3, 5), p=1.0)], p=getattr(cfg, 'blur_prob', 0.1)),
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2()
-            ], bbox_params=A.BboxParams(format='coco', label_fields=['category_ids']),
+            ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids']),
                keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
         else:
             self.transform = A.Compose([
                 A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2()
-            ], bbox_params=A.BboxParams(format='coco', label_fields=['category_ids']),
+            ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids']),
                keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
 
+    def close_mosaic(self):
+        """Disable mosaic augmentation."""
+        self.mosaic_prob = 0.0
+        logger.info("Mosaic augmentation closed.")
+
     def __call__(self, labels: Dict[str, Any]):
-        img = labels["img"]
+        img = cv2.cvtColor(labels["img"], cv2.COLOR_BGR2RGB)
         bboxes = labels.get("bboxes", [])
-        cls = labels.get("cls", [])
+        cls = labels.get("cls", labels.get("categories", [])) # Support both keys
         waypoints = labels.get("waypoints", [])
+
+        if len(bboxes) > 0:
+            bboxes = np.array(bboxes)[:, :4] # Ensure 4 columns only
+            # Safety Clip to image boundaries
+            h, w = img.shape[:2]
+            bboxes[:, [0, 2]] = np.clip(bboxes[:, [0, 2]], 0, w)
+            bboxes[:, [1, 3]] = np.clip(bboxes[:, [1, 3]], 0, h)
 
         # Albumentations expects [x, y, w, h] in pixels for 'coco'
         augmented = self.transform(image=img, bboxes=bboxes, category_ids=cls, keypoints=waypoints)
 
         labels["img"] = augmented["image"]
         labels["bboxes"] = np.array(augmented["bboxes"]) if len(augmented.get("bboxes", [])) > 0 else np.zeros((0, 4))
-        labels["categories"] = np.array(augmented["category_ids"]) if len(augmented.get("category_ids", [])) > 0 else np.zeros(0)
+        labels["cls"] = np.array(augmented["category_ids"]) if len(augmented.get("category_ids", [])) > 0 else np.zeros(0)
         labels["waypoints"] = np.array(augmented["keypoints"]) if len(augmented.get("keypoints", [])) > 0 else np.zeros((0, 2))
 
         return labels
