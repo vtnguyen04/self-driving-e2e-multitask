@@ -12,7 +12,6 @@ import torch
 from neuro_pilot.utils.logger import logger as LOGGER
 
 
-# NeuroPilot Semantic Branding
 PROJECT = "NeuroPilot AI"
 VERSION = "2.5.0"
 
@@ -28,7 +27,7 @@ class DataExportMixin:
     pass
 
 def TryExcept(msg=""):
-    """NeuroPilot standardized TryExcept decorator."""
+    """TryExcept decorator."""
     def decorator(func):
         def wrapper(*args, **kwargs):
             try:
@@ -39,7 +38,7 @@ def TryExcept(msg=""):
     return decorator
 
 def plt_settings():
-    """NeuroPilot standardized plotting settings."""
+    """Plotting settings."""
     def decorator(func):
         def wrapper(*args, **kwargs):
             return func(*args, **kwargs)
@@ -73,7 +72,12 @@ def bbox_ioa(box1: np.ndarray, box2: np.ndarray, iou: bool = False, eps: float =
     return inter_area / (area + eps)
 
 def box_iou(box1: torch.Tensor, box2: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-    (a1, a2), (b1, b2) = box1.float().unsqueeze(1).chunk(2, 2), box2.float().unsqueeze(0).chunk(2, 2)
+    if box1.numel() == 0 or box2.numel() == 0:
+        return torch.zeros((len(box1), len(box2)), device=box1.device)
+    if box1.ndim == 1: box1 = box1.unsqueeze(0)
+    if box2.ndim == 1: box2 = box2.unsqueeze(0)
+    a1, a2 = box1[:, None, :2], box1[:, None, 2:]
+    b1, b2 = box2[None, :, :2], box2[None, :, 2:]
     inter = (torch.min(a2, b2) - torch.max(a1, b1)).clamp_(0).prod(2)
     return inter / ((a2 - a1).prod(2) + (b2 - b1).prod(2) - inter + eps)
 
@@ -229,32 +233,32 @@ class ConfusionMatrix(DataExportMixin):
         gt_cls, gt_bboxes = batch["cls"], batch["bboxes"]
         if self.matches is not None:
             self.matches = {k: defaultdict(list) for k in {"TP", "FP", "FN", "GT"}}
-            for i in range(gt_cls.shape[0]):
+            for i in range(gt_cls.numel()):
                 self._append_matches("GT", batch, i)
 
-        is_obb = gt_bboxes.shape[1] == 5
+        is_obb = gt_bboxes.dim() > 1 and gt_bboxes.shape[1] == 5
         conf = 0.25 if conf in {None, 0.01 if is_obb else 0.001} else conf
-        no_pred = detections["cls"].shape[0] == 0
+        no_pred = detections["cls"].numel() == 0
 
-        if gt_cls.shape[0] == 0:
+        if gt_cls.numel() == 0:
             if not no_pred:
                 detections = {k: detections[k][detections["conf"] > conf] for k in detections}
-                detection_classes = detections["cls"].int().tolist()
+                detection_classes = detections["cls"].int().view(-1).tolist()
                 for i, dc in enumerate(detection_classes):
                     self.matrix[dc, self.nc] += 1
                     self._append_matches("FP", detections, i)
             return
 
         if no_pred:
-            gt_classes = gt_cls.int().tolist()
+            gt_classes = gt_cls.int().view(-1).tolist()
             for i, gc in enumerate(gt_classes):
                 self.matrix[self.nc, gc] += 1
                 self._append_matches("FN", batch, i)
             return
 
         detections = {k: detections[k][detections["conf"] > conf] for k in detections}
-        gt_classes = gt_cls.int().tolist()
-        detection_classes = detections["cls"].int().tolist()
+        gt_classes = gt_cls.int().view(-1).tolist()
+        detection_classes = detections["cls"].int().view(-1).tolist()
         bboxes = detections["bboxes"]
         iou = batch_probiou(gt_bboxes, bboxes) if is_obb else box_iou(gt_bboxes, bboxes)
 
@@ -518,7 +522,6 @@ class DetMetrics(SimpleClass, DataExportMixin):
 
     def summary(self, normalize=True, decimals=5):
         per_class = {"Box-P": self.box.p, "Box-R": self.box.r, "Box-F1": self.box.f1}
-        # Note: missing counts since we didn't store them in self (nt_per_class), but we can skip them or infer if needed
         return [{
             "Class": self.names[self.ap_class_index[i]],
             **{k: round(v[i], decimals) for k, v in per_class.items()},
@@ -528,8 +531,7 @@ class DetMetrics(SimpleClass, DataExportMixin):
 
 from abc import ABC, abstractmethod
 
-# --- NEURO PILOT ADAPTED CLASSES ---
-
+# Adapted classes
 def calculate_fitness(metrics: dict, weights: dict = None) -> float:
     """
     Calculate a single fitness score for the multi-task model.
@@ -573,7 +575,7 @@ class TrajectoryMetric(BaseMetric):
         pred_wp = preds['waypoints']
         gt_wp = batch['waypoints'].to(pred_wp.device)
 
-        # Simple interpolation if needed
+        # Interpolation if needed
         if gt_wp.shape[1] != pred_wp.shape[1]:
              gt_wp = torch.nn.functional.interpolate(gt_wp.permute(0,2,1), size=pred_wp.shape[1], mode='linear').permute(0,2,1)
 
@@ -636,10 +638,10 @@ class DetectionEvaluator:
 
             p_boxes = pred['boxes'].to(self.device)
             p_scores = pred['scores'].to(self.device)
-            p_cls = pred['labels'].to(self.device)
+            p_cls = pred['labels'].to(self.device).view(-1)
 
             t_boxes = target['boxes'].to(self.device).float()
-            t_cls = target['labels'].to(self.device).float()
+            t_cls = target['labels'].to(self.device).float().view(-1)
 
             # Update Confusion Matrix
             # CM expects xyxy for boxes, assumes 'boxes' in inputs are xyxy from validator (correct)

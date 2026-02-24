@@ -10,11 +10,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .ops import decode_and_nms, xywh2xyxy
 
-# Professional NeuroPilot End-to-End Self-Driving Visualization Suite
-# This framework is designed for high-performance multi-task plotting.
-
 class NeuroPlot:
-    """Namespace for global NeuroPilot plotting configurations and metadata."""
+    """Namespace for NeuroPilot plotting configurations and metadata."""
     VERSION = "2.2.0"
     PROJECT = "NeuroPilot AI"
     BACKEND = "Dual (PIL + CV2)"
@@ -22,7 +19,6 @@ class NeuroPlot:
 def smooth_trajectory(points: np.ndarray, window_size: int = 5) -> np.ndarray:
     """
     Apply a moving average filter to smooth waypoints for visualization.
-    Crucial for stabilizing jittery model internal predictions.
     """
     if len(points) < window_size:
         return points
@@ -34,12 +30,12 @@ def smooth_trajectory(points: np.ndarray, window_size: int = 5) -> np.ndarray:
 
 class Colors:
     """
-    Advanced Semantic Color Palette for NeuroPilot.
-    Provides standardized colors for object detection, pose estimation, and
+    Semantic Color Palette for NeuroPilot.
+    Provides colors for object detection, pose estimation, and
     semantic self-driving tasks (Ground Truth, Predictions, Trajectories).
     """
     def __init__(self):
-        # Professional 24-color palette
+        # 24-color palette
         hexs = (
             "FF3838", "2C99A8", "FF9D1C", "FF42CD", "C0F013", "12CF55", "049DB7", "042AFF",
             "5816FB", "D21BF3", "FF56BA", "FF8E1C", "FFB21C", "E0F612", "11E855", "04B0B7",
@@ -84,14 +80,15 @@ colors = Colors()
 
 class Annotator:
     """
-    Ultimate Image Annotator for NeuroPilot.
-    Supports Dual-Backend (PIL + CV2) for maximum quality and speed.
+    Image Annotator for NeuroPilot.
+    Supports Dual-Backend (PIL + CV2).
     """
     def __init__(self, im: np.ndarray, line_width: Optional[int] = None, font_size: Optional[int] = None,
                  font: str = "Arial.ttf", pil: bool = False):
         input_is_pil = isinstance(im, Image.Image)
         self.pil = pil or input_is_pil
         image_shape = im.size if input_is_pil else im.shape[:2]
+        # Increase minimum line width for visibility on small images
         self.lw = line_width or max(round(sum(image_shape) / 2 * 0.005), 2)
 
         if self.pil:
@@ -108,8 +105,10 @@ class Annotator:
         else:
             assert im.data.contiguous, "Image must be contiguous."
             self.im = im if im.flags.writeable else im.copy()
-            self.tf = max(self.lw - 1, 1)  # thickness
-            self.sf = self.lw / 2          # scale
+            # Increase thickness for BBox text (Requested: "tăng độ đậm")
+            self.tf = max(self.lw, 3)  # thickness (at least 3px)
+            # Decrease font scale for better readability as requested by user
+            self.sf = self.lw / 3.0          # scale (was / 1.5)
 
     def box_label(self, box: Union[list, tuple, np.ndarray, torch.Tensor], label: str = "",
                   color: tuple = (128, 128, 128), txt_color: tuple = (255, 255, 255)):
@@ -165,6 +164,52 @@ class Annotator:
             cv2.polylines(self.im, [points.astype(np.int32).reshape((-1, 1, 2))], False, color,
                           thickness or self.lw, cv2.LINE_AA)
 
+    def drivable_area(self, points: np.ndarray, color: tuple = (0, 255, 0), alpha: float = 0.4, base_width_bottom: int = 40, base_width_top: int = 5):
+        if len(points) < 2 or self.pil: return
+
+        mask = np.zeros(self.im.shape[:2], dtype=np.uint8)
+        left_bound = []
+        right_bound = []
+
+        n_pts = len(points)
+        for i in range(n_pts - 1):
+            p1 = points[i]
+            p2 = points[i+1]
+
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+
+            length = np.sqrt(dx**2 + dy**2)
+            if length > 0:
+                nx = -dy / length
+                ny = dx / length
+            else:
+                nx, ny = 0, 0
+
+            t_w = i / max(1, n_pts - 1)
+            current_width = base_width_bottom * (1 - t_w**0.5) + base_width_top * (t_w**0.5)
+
+            left_bound.append([int(p1[0] + nx * current_width), int(p1[1] + ny * current_width)])
+            right_bound.append([int(p1[0] - nx * current_width), int(p1[1] - ny * current_width)])
+
+        p_last = points[-1]
+        t_w = 1.0
+        current_width = base_width_top
+        left_bound.append([int(p_last[0] + nx * current_width), int(p_last[1] + ny * current_width)])
+        right_bound.append([int(p_last[0] - nx * current_width), int(p_last[1] - ny * current_width)])
+
+        poly = left_bound + right_bound[::-1]
+        cv2.fillPoly(mask, np.array([poly], dtype=np.int32), 255)
+
+        valid_mask = mask == 255
+
+        if np.any(valid_mask):
+            color_mask_fg = np.zeros_like(self.im)
+            color_mask_fg[valid_mask] = color
+            bg = self.im[valid_mask]
+            fg = color_mask_fg[valid_mask]
+            self.im[valid_mask] = cv2.addWeighted(bg, 1 - alpha, fg, alpha, 0).squeeze()
+
     def text(self, pos: tuple, text: str, color: tuple = (255, 255, 255), bg_color: Optional[tuple] = None, scale: Optional[float] = None):
         if self.pil:
             if bg_color:
@@ -183,7 +228,7 @@ class Annotator:
             cv2.putText(self.im, text, pos, 0, s, color, thickness=self.tf, lineType=cv2.LINE_AA)
 
 def plot_labels(boxes: np.ndarray, cls: np.ndarray, names: Dict[int, str] = {}, save_dir: Path = Path("runs/labels")):
-    """Professional dataset auditing visualization."""
+    """Dataset auditing visualization."""
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -204,7 +249,7 @@ def plot_labels(boxes: np.ndarray, cls: np.ndarray, names: Dict[int, str] = {}, 
     plt.close()
 
 def plot_results(csv_path: Union[str, Path], save_dir: Optional[Path] = None):
-    """Gaussian-smoothed training curve visualization."""
+    """Training curve visualization."""
     import matplotlib.pyplot as plt
     try:
         import pandas as pd
@@ -226,20 +271,23 @@ def plot_results(csv_path: Union[str, Path], save_dir: Optional[Path] = None):
 
 def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_path: Union[str, Path],
                names: Dict[int, str] = {}, max_samples: int = 4, conf_thres: float = 0.1):
-    """High-fidelity Mosaic report for batch inspection."""
+    """Report for batch inspection."""
     img_tensor = batch['image']
-    
+
+    # Ensure names is a dict
+    if isinstance(names, list):
+        names = {i: n for i, n in enumerate(names)}
+
     # Handle both direct and nested target structures from Trainer
     targets_root = batch.get('targets', batch)
     bboxes_gt = targets_root.get('bboxes')
     waypoints_gt = targets_root.get('waypoints')
-    if bboxes_gt is None: return
-    
+
     with torch.no_grad():
-        inv_img = torch.clamp(img_tensor * torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1,3,1,1) +
-                             torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1,3,1,1), 0, 1)
+        # NeuroPilot uses 0-1 normalization. Just scale to 0-255.
+        inv_img = torch.clamp(img_tensor, 0, 1)
         img_bgr = (inv_img.permute(0,2,3,1).cpu().numpy() * 255).astype(np.uint8)
-    
+
     img_bgr = np.ascontiguousarray(img_bgr[..., ::-1])
     B, H, W = img_bgr.shape[0], img_bgr.shape[1], img_bgr.shape[2]
     N = min(B, max_samples)
@@ -255,19 +303,19 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             from .ops import make_anchors, non_max_suppression, dist2bbox
             strides = torch.tensor([8, 16, 32], device=img_tensor.device)
             anchors, stride_tensor = make_anchors(output['feats'], strides)
-            
-            # 1. Decode Raw Distribution to Distance
+
+            # Decode Raw Distribution to Distance
             reg_max = output['boxes'].shape[1] // 4
             pred_dist = output['boxes'].permute(0, 2, 1) # [B, A, 4*reg_max]
             if reg_max > 1:
                 proj = torch.arange(reg_max, dtype=pred_dist.dtype, device=pred_dist.device)
                 pred_dist = pred_dist.view(B, -1, 4, reg_max).softmax(3).matmul(proj)
-            
-            # 2. Convert Distance to XYWH (Pixel space)
+
+            # Convert Distance to XYWH (Pixel space)
             # pred_dist is ltrb in grid units. dist2bbox converts to cxcywh in grid units.
             pred_bboxes = dist2bbox(pred_dist, anchors.unsqueeze(0), xywh=True) * stride_tensor
-            
-            # 3. Apply NMS (conf_thres should be enough to filter noise)
+
+            # Apply NMS (conf_thres should be enough to filter noise)
             pred_scores = output['scores'].sigmoid()
             combined = torch.cat([pred_bboxes.permute(0, 2, 1), pred_scores], dim=1)
             # Use standard conf_thres (0.25) and limit det to 50 for visualization clarity
@@ -275,35 +323,45 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
 
     for i in range(N):
         y_off = i * H
-        
-        # 1. Path Column (GT Green, Pred Magenta)
+
+        # Path Column (GT Green, Pred Magenta)
         can_p = img_bgr[i].copy(); ann_p = Annotator(can_p)
         targets_i = batch.get('targets', batch)
-        wp_gt = targets_i.get('waypoints')[i].cpu().numpy() if 'waypoints' in targets_i else None
-        cmd_idx = targets_i.get('command_idx')[i].item() if 'command_idx' in targets_i else -1
-        cmd_map = {0: "STRAIGHT", 1: "LEFT", 2: "RIGHT", 3: "UTURN"}
+
+        wp_gt = None
+        if 'waypoints' in targets_i and targets_i['waypoints'] is not None:
+             wp_gt = targets_i['waypoints'][i].cpu().numpy()
+
+        cmd_idx = targets_i.get('command_idx')[i].item() if 'command_idx' in targets_i and targets_i['command_idx'] is not None else -1
+        # Updated mapping based on user feedback (No UTURN)
+        # Assumed standard: 0: FOLLOW, 1: LEFT, 2: RIGHT, 3: STRAIGHT
+        cmd_map = {0: "FOLLOW LANE", 1: "LEFT", 2: "RIGHT", 3: "STRAIGHT"}
         cmd_txt = cmd_map.get(cmd_idx, f"CMD:{cmd_idx}")
-        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.4)
-        
+        # Reduced scale from 1.4 to 1.0 based on user feedback
+        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)
+
         if wp_gt is not None:
-            wp_gt = (wp_gt + 1) / 2 * [W-1, H-1]
-            ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=2); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=2)
+            wp_gt = (wp_gt + 1) / 2 * [W, H]
+            # Increased thickness based on user request ("tăng độ dày")
+            ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=5); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=5)
 
         if output is not None and 'waypoints' in output:
             wp_p = output['waypoints']
             if isinstance(wp_p, dict): wp_p = wp_p.get('waypoints', next(iter(wp_p.values())))
             wp_p = wp_p[i].detach().cpu().numpy()
             if not np.isnan(wp_p).any():
-                wp_p = (wp_p + 1) / 2 * [W-1, H-1]
-                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=3); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=3)
-        
-        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.4)
-        ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
+                wp_p = (wp_p + 1) / 2 * [W, H]
+                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=5); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=5)
+
+        # Reduced scale from 1.4 to 1.0 based on user feedback
+        ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)
+        # ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, 0:W] = ann_p.result()
 
-        # 2. Vision Column (Detection - Pred in RED)
-        can_v = img_bgr[i].copy(); ann_v = Annotator(can_v, pil=True)
-        
+        # Vision Column (Detection - Pred in RED)
+        img_rgb = cv2.cvtColor(img_bgr[i], cv2.COLOR_BGR2RGB)
+        can_v = img_rgb.copy(); ann_v = Annotator(can_v, pil=True)
+
         # Ground Truth Bounding Boxes: Filter by batch_idx for flattened data
         if 'batch_idx' in targets_i:
             idx_mask = (targets_i['batch_idx'] == i)
@@ -311,8 +369,13 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             gt_c = targets_i['cls'][idx_mask]
         else:
             # Fallback for old list-style targets
-            gt_b = targets_i.get('bboxes')[i] if 'bboxes' in targets_i and i < len(targets_i['bboxes']) else None
-            gt_c = targets_i.get('categories')[i] if 'categories' in targets_i and i < len(targets_i['categories']) else None
+            gt_b = None
+            if 'bboxes' in targets_i and targets_i['bboxes'] is not None and i < len(targets_i['bboxes']):
+                gt_b = targets_i.get('bboxes')[i]
+
+            gt_c = None
+            if 'categories' in targets_i and targets_i['categories'] is not None and i < len(targets_i['categories']):
+                gt_c = targets_i.get('categories')[i]
 
         if gt_b is not None:
             if torch.is_tensor(gt_b): gt_b = gt_b.cpu().numpy()
@@ -323,35 +386,51 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
                 cls_idx = int(gt_c[idx]) if gt_c is not None and idx < len(gt_c) else -1
                 # b is [cx, cy, w, h] normalized 0-1
                 x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
-                ann_v.box_label([x1, y1, x2, y2], label=f"GT: {names.get(cls_idx, cls_idx)}", color=(0, 255, 0))
-        
+
+                # Use class-specific color
+                color = colors(cls_idx, bgr=True)
+                txt_color = (255, 255, 255) # White text usually works well on colored boxes if font is thick enough
+
+                ann_v.box_label([x1, y1, x2, y2], label=f"{names.get(cls_idx, cls_idx)}", color=color, txt_color=txt_color)
+
         if detections is not None and i < len(detections):
             det = detections[i]
             if torch.is_tensor(det): det = det.detach().cpu().numpy()
             for d in det:
                 cls_id = int(d[5]); conf = d[4]
-                # Drawing in RED (0, 0, 255) for predictions
-                ann_v.box_label(d[:4], label=f"{names.get(cls_id, cls_id)} {conf:.2f}", color=(0, 0, 255))
+                # Use class-specific color
+                color = colors(cls_id, bgr=True)
+
+                label_txt = f"{names.get(cls_id, str(cls_id))} {conf:.2f}"
+                ann_v.box_label(d[:4], label=label_txt, color=color)
         ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, W:2*W] = ann_v.result()
 
-        # 3. Heatmap Columns
+        # Heatmap Columns
+        # Heatmap Columns
         if has_hm:
-            from neuro_pilot.utils.losses import HeatmapWaypointLoss
-            hm_gen = HeatmapWaypointLoss(device='cpu')
+            from neuro_pilot.utils.losses import HeatmapLoss
+            hm_gen = HeatmapLoss(device='cpu')
             if waypoints_gt is not None:
                 gt_hm = hm_gen.generate_heatmap(waypoints_gt[i:i+1].cpu(), H, W).squeeze().numpy()
                 gt_hm = (gt_hm - gt_hm.min()) / (gt_hm.max() - gt_hm.min() + 1e-6)
                 can_gt = cv2.addWeighted(cv2.applyColorMap((gt_hm*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, img_bgr[i].copy(), 0.4, 0)
                 mosaic[y_off:y_off+H, 2*W:3*W] = can_gt
-            
+
             hm_tensor = output['heatmap']
             if isinstance(hm_tensor, dict): hm_tensor = hm_tensor.get('heatmap', next(iter(hm_tensor.values())))
-            hm_i = hm_tensor[i].detach().cpu().numpy().squeeze()
+
+            # Apply Sigmoid and handle noise
+            hm_i = torch.sigmoid(hm_tensor[i]).detach().cpu().numpy().squeeze()
             if hm_i.ndim == 3: hm_i = hm_i.mean(axis=0)
+
+            hm_max = hm_i.max()
+            if hm_max > 0.2:
+                hm_i = hm_i / (hm_max + 1e-6)
+
+            hm_i = np.clip(hm_i, 0, 1)
             # Ensure float32 for cv2.resize
             hm_i = cv2.resize(np.nan_to_num(hm_i).astype(np.float32), (W, H))
-            hm_i = (hm_i - hm_i.min()) / (hm_i.max() - hm_i.min() + 1e-6)
             can_pred = cv2.addWeighted(cv2.applyColorMap((hm_i*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, img_bgr[i].copy(), 0.4, 0)
             mosaic[y_off:y_off+H, 3*W:4*W] = can_pred
 

@@ -4,11 +4,43 @@ import math
 from pathlib import Path
 from neuro_pilot.utils.logger import logger
 
+def select_device(device="", verbose=True):
+    """
+    Selects the best available device (CUDA or CPU).
+    Args:
+        device (str | int | torch.device): Device string like '0' or 'cpu' or 'cuda:0'.
+    Returns:
+        torch.device: The selected device.
+    """
+    if isinstance(device, torch.device):
+        return device
+
+    # Simple selection logic
+    s = str(device).lower()
+    if s == 'cpu':
+        return torch.device('cpu')
+
+    if torch.cuda.is_available():
+        if s == '' or s == 'cuda' or s.isdigit():
+            idx = int(s) if s.isdigit() else 0
+            if verbose:
+                p = torch.cuda.get_device_properties(idx)
+                logger.info(f"Using CUDA:{idx} ({p.name}, {p.total_memory / 1024**2:.0f}MiB)")
+            return torch.device(f'cuda:{idx}')
+        if s.startswith('cuda:'):
+            return torch.device(s)
+
+    if verbose:
+        logger.info("CUDA not available, using CPU.")
+    return torch.device('cpu')
+
 def save_checkpoint(state, is_best, filename='checkpoint.pt', save_dir='weights'):
-    """Save training checkpoint."""
+    """Save training checkpoint including metadata."""
     save_path = Path(save_dir)
     save_path.mkdir(parents=True, exist_ok=True)
     filepath = save_path / filename
+
+    # Metadata is usually already in 'state' if called from Trainer.save_checkpoint
     torch.save(state, filepath)
     if is_best:
         best_path = save_path / filename.replace('last', 'best') if 'last' in filename else save_path / 'best.pt'

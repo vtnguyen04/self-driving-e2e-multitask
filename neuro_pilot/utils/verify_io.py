@@ -11,7 +11,7 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/yolo_style.yaml"):
     model = DetectionModel(cfg_path, nc=14).to(device)
     model.eval()
 
-    # 1. Input Verification
+    # Input Verification
     B, C, H, W = 1, 3, 224, 224
     img = torch.randn(B, C, H, W)
     cmd_onehot = torch.zeros(B, 4)
@@ -20,12 +20,12 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/yolo_style.yaml"):
     logger.info(f"Input Image Shape: {img.shape}")
     logger.info(f"Input Command Shape: {cmd_onehot.shape}")
 
-    # 2. Forward Pass
+    # Forward Pass
     with torch.no_grad():
         output = model(img, cmd_onehot=cmd_onehot)
 
-    # 3. Output Dictionary Key Verification
-    # Standard keys we expect for a production NeuroPilot model
+    # Output Dictionary Key Verification
+    # keys we expect for a production NeuroPilot model
     required_keys = ['one2many', 'waypoints', 'heatmap', 'classes']
     logger.info(f"Output Dictionary Keys: {list(output.keys())}")
 
@@ -35,7 +35,7 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/yolo_style.yaml"):
     else:
         logger.info("✅ All required MT-API keys present.")
 
-    # 4. Shape Verification
+    # Shape Verification
     logger.info("--- Tensor Shape Analysis ---")
 
     # Detection

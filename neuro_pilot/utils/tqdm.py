@@ -41,16 +41,13 @@ class TQDM:
         unit_divisor: int = 1000,
         bar_format: str | None = None,  # kept for API compatibility; not used for formatting
         initial: int = 0,
+        ncols: int | None = None,
         **kwargs,
     ) -> None:
         """Initialize the TQDM progress bar."""
         # Disable if not verbose
         if disable is None:
-            try:
-                # Default to False if logger check fails
-                disable = False
-            except ImportError:
-                disable = False
+            disable = False
 
         self.iterable = iterable
         self.desc = desc or ""
@@ -63,6 +60,7 @@ class TQDM:
         self.noninteractive = is_noninteractive_console()
         self.mininterval = max(mininterval, self.NONINTERACTIVE_MIN_INTERVAL) if self.noninteractive else mininterval
         self.initial = initial
+        self.ncols = ncols
 
         self.bar_format = bar_format
         self.file = file or sys.stdout
@@ -90,7 +88,6 @@ class TQDM:
             return ""
 
         inv_rate = 1 / rate if rate else None
-
         if inv_rate and inv_rate > 1:
             return f"{inv_rate:.1f}s/B" if self.is_bytes else f"{inv_rate:.1f}s/{self.unit}"
 
@@ -119,7 +116,7 @@ class TQDM:
             h, m = int(seconds // 3600), int((seconds % 3600) // 60)
             return f"{h}:{m:02d}:{seconds % 60:02.0f}"
 
-    def _generate_bar(self, width: int = 12) -> str:
+    def _generate_bar(self, width: int = 15) -> str:
         """Generate progress bar."""
         if self.total is None:
             return "━" * width if self.closed else "─" * width
@@ -136,6 +133,19 @@ class TQDM:
         if self.noninteractive:
             return False
         return (self.total is not None and self.n >= self.total) or (dt >= self.mininterval)
+
+    def _get_ncols(self):
+        """Get terminal columns."""
+        try:
+            import fcntl
+            import termios
+            import struct
+            return struct.unpack('hh', fcntl.ioctl(sys.stderr.fileno(), termios.TIOCGWINSZ, '1234'))[1]
+        except:
+             try:
+                 return os.get_terminal_size().columns
+             except:
+                 return 80
 
     def _display(self, final: bool = False) -> None:
         """Display progress bar."""
@@ -196,9 +206,15 @@ class TQDM:
         else:
             progress_str = f"{self.desc}: {bar} {n_str} {rate_str} {elapsed_str}"
 
+        # FIX: Ensure it doesn't exceed terminal width to avoid wrapping/duplication
+        ncols_term = self._get_ncols()
+        ncols_to_use = min(self.ncols, ncols_term) if self.ncols else ncols_term
+        if len(progress_str) > ncols_to_use - 1:
+            progress_str = progress_str[:ncols_to_use-4] + "..."
+
         try:
             if self.noninteractive:
-                self.file.write(progress_str)
+                self.file.write(progress_str + "\n")
             else:
                 self.file.write(f"\r\033[K{progress_str}")
             self.file.flush()
@@ -220,7 +236,11 @@ class TQDM:
     def set_postfix(self, **kwargs: Any) -> None:
         """Set postfix (appends to description)."""
         if kwargs:
-            postfix = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+            # Shorten values for display
+            def format_val(v):
+                if isinstance(v, float): return f"{v:.4g}"
+                return str(v)
+            postfix = ", ".join(f"{k}={format_val(v)}" for k, v in kwargs.items())
             base_desc = self.desc.split(" | ")[0] if " | " in self.desc else self.desc
             self.set_description(f"{base_desc} | {postfix}")
 
