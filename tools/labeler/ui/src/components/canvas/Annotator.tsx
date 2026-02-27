@@ -55,6 +55,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
 
   // Floating Search State
   const [searchTerm, setSearchSearchTerm] = useState('');
+  const [newlyCreatedIdx, setNewlyCreatedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     const image = new Image();
@@ -263,6 +264,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
         }, -1);
 
         if (hitBoxIdx !== -1) {
+            setNewlyCreatedIdx(null); // Explicitly clear when selecting existing
             onSelectBBox?.(hitBoxIdx);
             setDragInfo({ type: 'box', index: hitBoxIdx, startX: e.clientX, startY: e.clientY });
         } else {
@@ -283,6 +285,23 @@ export const Annotator: React.FC<AnnotatorProps> = ({
   useEffect(() => {
     const handleKeys = (e: KeyboardEvent) => {
         if (document.activeElement?.tagName === 'INPUT') return;
+
+        if (e.key === 'Escape') {
+            if (isDrawing) {
+                setIsDrawing(false);
+                setStartPos(null);
+            } else if (selectedBBoxIdx !== undefined && selectedBBoxIdx !== null) {
+                if (selectedBBoxIdx === newlyCreatedIdx) {
+                    handleDelete(selectedBBoxIdx);
+                } else {
+                    onSelectBBox?.(null);
+                }
+            } else if (mode === 'waypoint' && control_points.length > 0) {
+                onUpdate({ control_points: [], waypoints: [] });
+            }
+            return;
+        }
+
         if ((e.key === 'Delete' || e.key === 'Backspace') && selectedBBoxIdx !== undefined && selectedBBoxIdx !== null) {
             handleDelete(selectedBBoxIdx);
         }
@@ -364,7 +383,9 @@ export const Annotator: React.FC<AnnotatorProps> = ({
             const h = Math.abs(mouseWorld.y - startPos.y);
             if (w > 0.001 && h > 0.001) {
                 const newBox: BBox = { cx: (startPos.x + mouseWorld.x) / 2, cy: (startPos.y + mouseWorld.y) / 2, w, h, category: 0 };
-                onUpdate({ bboxes: [...bboxes, newBox] });
+                const nextBboxes = [...bboxes, newBox];
+                setNewlyCreatedIdx(nextBboxes.length - 1);
+                onUpdate({ bboxes: nextBboxes });
                 onSelectBBox?.(bboxes.length);
             }
         }
@@ -458,10 +479,21 @@ export const Annotator: React.FC<AnnotatorProps> = ({
                             if (e.key === 'Enter' && filteredQuickClasses.length > 0) {
                                 const next = [...bboxes];
                                 next[selectedBBoxIdx!] = { ...next[selectedBBoxIdx!], category: filteredQuickClasses[0].id };
+                                setNewlyCreatedIdx(null); // Confirmed correct
                                 onUpdate({ bboxes: next });
                                 onSelectBBox?.(null);
                             }
-                            if (e.key === 'Escape') onSelectBBox?.(null);
+                            if (e.key === 'Escape') {
+                                if (selectedBBoxIdx !== undefined && selectedBBoxIdx !== null) {
+                                    if (selectedBBoxIdx === newlyCreatedIdx) {
+                                        handleDelete(selectedBBoxIdx);
+                                    } else {
+                                        onSelectBBox?.(null);
+                                    }
+                                } else {
+                                    onSelectBBox?.(null);
+                                }
+                            }
                         }}
                         className="bg-transparent border-none outline-none text-[11px] font-black text-white placeholder:text-white/20 w-full"
                     />
