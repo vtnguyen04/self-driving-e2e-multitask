@@ -137,8 +137,10 @@ export const AnnotatePage: React.FC = () => {
   const handleUpdate = useCallback((updated: Partial<Sample>) => {
     const finalUpdate: Partial<CurrentDataState> = { ...updated };
 
-    if (updated.waypoints && updated.waypoints.length === 4) {
-        const [p0, p1, p2, p3] = updated.waypoints;
+    const ctrl_to_use = updated.control_points || currentData.control_points;
+    if (ctrl_to_use && ctrl_to_use.length === 4 && (!updated.waypoints || updated.waypoints.length === 4)) {
+        // Recalculate curve to ensure consistency [p0, p1, p2, p3]
+        const [p0, p1, p2, p3] = ctrl_to_use;
         const resampled: Waypoint[] = [];
         for (let i = 0; i < 10; i++) {
             const t = i / 9;
@@ -195,6 +197,8 @@ export const AnnotatePage: React.FC = () => {
     let p2 = {x:0.5, y:0.5}, p3 = p3_base;
     if (type === 'left') { p2 = {x:0.3, y:0.5}; p3 = {x:0.1, y:0.5}; }
     if (type === 'right') { p2 = {x:0.7, y:0.5}; p3 = {x:0.9, y:0.5}; }
+
+    // Internal Order: [Start(0), C1(1), C2(2), End(3)]
     const ctrls = [p0, p1, p2, p3];
     const pts: Waypoint[] = [];
     for (let i = 0; i < 10; i++) {
@@ -227,6 +231,9 @@ export const AnnotatePage: React.FC = () => {
       }
       if (e.key.toLowerCase() === 'q') setMode('bbox');
       if (e.key.toLowerCase() === 'w') setMode('waypoint');
+      if (e.key === '1') handleSpawnTemplate('straight');
+      if (e.key === '2') handleSpawnTemplate('left');
+      if (e.key === '3') handleSpawnTemplate('right');
     };
     window.addEventListener('keydown', handleKeys);
     return () => window.removeEventListener('keydown', handleKeys);

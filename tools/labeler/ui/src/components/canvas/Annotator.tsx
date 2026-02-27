@@ -233,6 +233,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
         }
         if (control_points.length < 4 && e.button === 0) {
             const nextCtrls = [...control_points, world];
+
             if (nextCtrls.length === 4) {
                 const [p0, p1, p2, p3] = nextCtrls;
                 const nextWaypoints: Waypoint[] = [];
@@ -401,9 +402,21 @@ export const Annotator: React.FC<AnnotatorProps> = ({
   }, [handleZoom]);
 
   const filteredQuickClasses = useMemo(() => {
-    return classNames.map((c, i) => ({ name: c, id: i }))
-                     .filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase()))
-                     .slice(0, 5);
+    const list = classNames.map((c, i) => ({ name: c, id: i }));
+    if (!searchTerm) return list;
+
+    const lowerSearch = searchTerm.toLowerCase();
+    return list
+      .filter(c => c.name.toLowerCase().includes(lowerSearch))
+      .sort((a, b) => {
+        const aName = a.name.toLowerCase();
+        const bName = b.name.toLowerCase();
+        const aIdx = aName.indexOf(lowerSearch);
+        const bIdx = bName.indexOf(lowerSearch);
+
+        if (aIdx !== bIdx) return aIdx - bIdx;
+        return aName.localeCompare(bName);
+      });
   }, [classNames, searchTerm]);
 
   const selectedBoxPos = useMemo(() => {
@@ -460,7 +473,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
                         <Trash2 className="w-3.5 h-3.5" />
                     </button>
                 </div>
-                <div className="p-1 max-h-[150px] overflow-y-auto cyber-scrollbar">
+                <div className="p-1 max-h-[250px] overflow-y-auto cyber-scrollbar">
                     {filteredQuickClasses.map((c) => (
                         <button
                             key={c.id}

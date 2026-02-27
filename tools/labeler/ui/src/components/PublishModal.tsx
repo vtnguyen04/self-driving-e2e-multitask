@@ -15,19 +15,28 @@ export const PublishModal: React.FC<PublishModalProps> = ({ isOpen, onClose, onP
   if (!isOpen) return null;
 
   const handleRatioChange = (key: 'train' | 'val' | 'test', value: number) => {
-    // Basic logic to balance ratios (could be more complex but this is a start)
-    const otherKeys = (['train', 'val', 'test'] as const).filter(k => k !== key);
     const newValue = Math.max(0, Math.min(1, value));
     const remaining = 1 - newValue;
+    const otherKeys = (['train', 'val', 'test'] as const).filter(k => k !== key);
 
-    // Simple distribution: split remaining 50/50 among others
-    const distributed = remaining / 2;
+    // Proportional distribution
+    const otherTotal = ratios[otherKeys[0]] + ratios[otherKeys[1]];
+    let d0 = 0;
+    let d1 = 0;
+
+    if (otherTotal > 0) {
+        d0 = (ratios[otherKeys[0]] / otherTotal) * remaining;
+        d1 = (ratios[otherKeys[1]] / otherTotal) * remaining;
+    } else {
+        d0 = remaining / 2;
+        d1 = remaining / 2;
+    }
 
     setRatios({
         ...ratios,
         [key]: newValue,
-        [otherKeys[0]]: distributed,
-        [otherKeys[1]]: distributed
+        [otherKeys[0]]: d0,
+        [otherKeys[1]]: d1
     });
   };
 
