@@ -9,6 +9,14 @@ loss:
   lambda_smooth: 0.1  # Smoothness loss multiplier
   lambda_cls: 1.0     # Classification loss multiplier (from debug script)
   lambda_gate: 0.5    # Command gating loss multiplier
+  # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
+  use_fdat: False             # Toggle: False = SmoothL1 (default), True = FDAT
+  fdat_alpha_lane: 10.0       # Cross-track penalty weight (lane-following)
+  fdat_beta_lane: 1.0         # Along-track penalty weight (lane-following)
+  fdat_alpha_inter: 5.0       # Cross-track penalty weight (intersection)
+  fdat_beta_inter: 3.0        # Along-track penalty weight (intersection)
+  fdat_lambda_heading: 2.0    # Heading consistency weight
+  fdat_lambda_endpoint: 5.0   # Endpoint anchor weight (intersection only)
 
 trainer:
   max_epochs: 300
@@ -23,6 +31,10 @@ trainer:
   use_amp: True
   use_ema: True
   ema_decay: 0.999
+  checkpoint_top_k: 3       # Keep top k best weights
+  early_stop_patience: 10   # Stop training if fitness stops improving
+  grad_clip_norm: 10.0      # Gradient clipping threshold
+  cmd_dropout_prob: 0.4     # Drop command to force visual learning
   experiment_name: "default"
 
 data:
@@ -30,21 +42,25 @@ data:
   batch_size: 32
   num_workers: 4
   augment:
-    enabled: True
+    affine_prob: 0.5
     rotate_deg: 5.0
     translate: 0.1
     scale: 0.5
-    shear: 0.0
-    perspective: 0.0
+    shear: 0.2
+    perspective_prob: 0.3
+    perspective: 0.1
+    hsv_prob: 0.5
     hsv_h: 0.015
     hsv_s: 0.7
     hsv_v: 0.4
+    color_jitter_prob: 0.5
+    color_jitter: 0.3    # Random brightness and contrast intensity
     fliplr: 0.5
     mosaic: 1.0
-    mixup: 0.0
+    mixup: 1.0
     copy_paste: 0.0
-    noise_prob: 0.4
-    blur_prob: 0.1
+    noise_prob: 0.2      # Probability of adding Gauss/ISO noise
+    blur_prob: 0.1       # Probability of adding Motion/Gaussian blur
 
 head:
   skip_heatmap_inference: False

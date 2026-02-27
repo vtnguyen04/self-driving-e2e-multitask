@@ -284,8 +284,12 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
     waypoints_gt = targets_root.get('waypoints')
 
     with torch.no_grad():
-        # NeuroPilot uses 0-1 normalization. Just scale to 0-255.
-        inv_img = torch.clamp(img_tensor, 0, 1)
+        # ImageNet Denormalization for visual review
+        mean = torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1, 3, 1, 1)
+        img_denorm = img_tensor * std + mean
+
+        inv_img = torch.clamp(img_denorm, 0, 1)
         img_bgr = (inv_img.permute(0,2,3,1).cpu().numpy() * 255).astype(np.uint8)
 
     img_bgr = np.ascontiguousarray(img_bgr[..., ::-1])
@@ -387,11 +391,13 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
                 # b is [cx, cy, w, h] normalized 0-1
                 x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
 
-                # Use class-specific color
+                # Use class-specific color, but darker or distinct for GT
                 color = colors(cls_idx, bgr=True)
-                txt_color = (255, 255, 255) # White text usually works well on colored boxes if font is thick enough
+                txt_color = (255, 255, 255) # White text
 
-                ann_v.box_label([x1, y1, x2, y2], label=f"{names.get(cls_idx, cls_idx)}", color=color, txt_color=txt_color)
+                # Add [GT] prefix to distinguish from predictions
+                gt_label = f"[GT] {names.get(cls_idx, cls_idx)}"
+                ann_v.box_label([x1, y1, x2, y2], label=gt_label, color=color, txt_color=txt_color)
 
         if detections is not None and i < len(detections):
             det = detections[i]
@@ -404,7 +410,10 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
                 label_txt = f"{names.get(cls_id, str(cls_id))} {conf:.2f}"
                 ann_v.box_label(d[:4], label=label_txt, color=color)
         ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
-        mosaic[y_off:y_off+H, W:2*W] = ann_v.result()
+
+        # PIL Annotator works in RGB, but our export canvas expects BGR
+        ann_v_res = cv2.cvtColor(ann_v.result(), cv2.COLOR_RGB2BGR)
+        mosaic[y_off:y_off+H, W:2*W] = ann_v_res
 
         # Heatmap Columns
         # Heatmap Columns

@@ -1,55 +1,56 @@
+from neuro_pilot import NeuroPilot
 
-import torch
-from neuro_pilot.engine.model import NeuroPilot
 
 def run_real_training():
-    # Initialize Model
-    model = NeuroPilot("neuro_pilot/cfg/models/yolo_all_tasks.yaml")
+    model = NeuroPilot("neuro_pilot/cfg/models/yolo_style.yaml", scale="s")
 
     # Training configuration overrides
     overrides = {
-        "model_cfg": "neuro_pilot/cfg/models/yolo_all_tasks.yaml",
         "data": {
-            "dataset_yaml": "data_v1/data.yaml",
+            "dataset_yaml": "v1/data.yaml",
             "batch_size": 16,
-            "image_size": 640,
+            "image_size": 320,
             "augment": {
-                "rotate_deg": 2.0,
-                "translate": 0.05,
-                "scale": 0.0,
-                "hsv_s": 0.0,
-                "hsv_v": 0.0,
-                "fliplr": 0.0,
+                "rotate_deg": 10.0,
+                "translate": 0.2,
+                "scale": 0.2,
+                "color_jitter": 0.01,
+                "shear": 0.0,
+                "perspective": 0.1,
                 "mosaic": 0.0,
                 "noise_prob": 0.0,
-                "blur_prob": 0.0
-            }
+                "blur_prob": 0.05,
+            },
         },
         "loss": {
-            "lambda_det": 0.0,
-            "lambda_traj": 0.0,
-            "lambda_heatmap": 1.0,
-            "lambda_cls": 0.0,
-            "lambda_smooth": 0.0,
-            "lambda_gate": 0.0,
-            "fitness_l1": 0.0,
-            "fitness_map50": 0.0
+            "lambda_det": 2.5,
+            "lambda_traj": 7.5,
+            "lambda_heatmap": 10.0,
+            "lambda_cls": 2.0,
+            "lambda_smooth": 0.1,
+            "lambda_gate": 0.5,
+            # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
+            "use_fdat": True,
+            "fdat_alpha_lane": 10.0,
+            "fdat_beta_lane": 1.0,
+            "fdat_alpha_inter": 5.0,
+            "fdat_beta_inter": 3.0,
+            "fdat_lambda_heading": 2.0,
+            "fdat_lambda_endpoint": 5.0,
         },
         "trainer": {
-            "experiment_name": "clean_minimal_run",
-            "image_size": 640,
-            "max_epochs": 2,
+            "experiment_name": "train_v1",
+            "image_size": 320,
+            "max_epochs": 100,
             "learning_rate": 1e-3,
             "optimizer": "AdamW",
             "lr_final": 0.01,
-            "warmup_epochs": 1.0,
+            "warmup_epochs": 3.0,
             "use_ema": True,
-            "use_amp": True
-        }
+            "use_amp": True,
+        },
     }
 
-    # Start Training
-    print("🚀 Starting Training...")
     model.train(**overrides)
 
 if __name__ == "__main__":

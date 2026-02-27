@@ -28,8 +28,8 @@ class AugmentConfig(BaseModel):
     rotate_deg: float = 20.0
     translate: float = 0.1
     scale: float = 0.1
-    perspective: float = 0.0
     shear: float = 0.0
+    perspective: float = 0.0
     fliplr: float = 0.0  # Lane following usually doesn't flip L/R easily without label swap
     color_jitter: float = 0.3  # brightness/contrast
     hsv_h: float = 0.015

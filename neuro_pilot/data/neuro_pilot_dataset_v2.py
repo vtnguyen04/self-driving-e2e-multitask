@@ -237,15 +237,20 @@ class NeuroPilotDataset(Dataset):
         # Apply additional transformations if any
         if self.transform:
             data = self.transform(data) # Apply transform on letterboxed data
-            img_t = data['img']
             wp_aug = data['waypoints']
             bx_aug = data['bboxes']  # Pascal VOC (xyxy pixels)
             cls_t = data['cls'] # Synchronized 'cls'
         else:
-            # Convert BGR to RGB before tensor conversion
-            img_rgb = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
-            img_t = torch.from_numpy(img_rgb).permute(2, 0, 1).float() / 255.0
             wp_aug, bx_aug, cls_t = data['waypoints'], data['bboxes'], data['cls']
+
+        # Convert BGR to RGB and Normalize
+        img_rgb = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
+        img_t = torch.from_numpy(img_rgb).permute(2, 0, 1).float() / 255.0
+
+        # Apply ImageNet Normalization manually
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+        img_t = (img_t - mean) / std
 
         # Use final image dimensions for normalization
         _, h_final, w_final = img_t.shape

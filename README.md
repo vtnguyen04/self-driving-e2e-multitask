@@ -1,23 +1,4 @@
-# NeuroPilot: E2E Autonomous Driving Framework
-
-NeuroPilot is a high-performance, modular End-to-End (E2E) autonomous driving framework designed for dynamic multitask learning. It integrates object detection, trajectory prediction, and heatmap estimation into a unified, composable architecture.
-
-## 🚀 Key Features
-
--   **Dynamic Multitask Composition**: Combine tasks on the fly via CLI (e.g., `--task trajectory,detect`).
--   **Modular Architecture**:
-    -   **Shared Backbone**: MobileNetV4-based encoder for efficient feature extraction.
-    -   **Atomic Heads**: Independent, hot-swappable heads for Trajectory, Detection, and Heatmap.
--   **High-Performance Training**:
-    -   Accelerated by `uv` and `torch.amp`.
-    -   Custom `TQDM` and `SystemLogger` for real-time monitoring.
--   **Production Ready**:
-    -   `TensorRT` and `ONNX` export support (experimental).
-    -   Deployment-optimized post-processing.
-
 ## 🛠️ Installation
-
-Prerequisites: Python 3.10+, CUDA 11.8+ (recommended).
 
 We use `uv` for blazing fast dependency management.
 
@@ -33,62 +14,14 @@ uv sync
 
 ### Training
 
-The framework supports **Dynamic Task Composition**. You don't need to write new model classes; simply specify the tasks you want to train.
-
-**1. Train Full E2E Stack (Trajectory + Heatmap + Detection):**
 ```bash
-uv run python neuro_pilot/main.py neuro_pilot/cfg/models/yolo_style.yaml --task trajectory,heatmap,detect
-```
-
-**2. Train Only Trajectory:**
-```bash
-uv run python neuro_pilot/main.py neuro_pilot/cfg/models/yolo_style.yaml --task trajectory
-```
-
-**3. Train Detection Only:**
-```bash
-uv run python neuro_pilot/main.py neuro_pilot/cfg/models/yolo_style.yaml --task detect
+uv run scripts/train.py
 ```
 
 ### Configuration
 
 Configurations are managed via YAML files in `neuro_pilot/cfg/`.
--   **Model Config**: `models/yolo_style.yaml` (Backbone, Head setup).
--   **Hyperparameters**: `hyp.yaml` (LR, weight decay, anchors).
-
-## � Deployment & Export (Mới)
-
-NeuroPilot hỗ trợ export model ra ONNX và TensorRT để chạy inference hiệu năng cao trên NVIDIA Jetson.
-
-### 1. Export Model
-
-```bash
-# Export to ONNX
-python tools/export.py --model experiments/clean_minimal_run/weights/best.pt --format onnx --imgsz 320
-
-# Export to TensorRT Engine (Yêu cầu cài đặt TensorRT)
-python tools/export.py --model experiments/clean_minimal_run/weights/best.pt --format engine --imgsz 320 --half
-```
-
-### 2. Inference
-
-Chúng tôi cung cấp 2 script riêng biệt cho từng runtime:
-
-**ONNX Runtime:**
-```bash
-python examples/jetson_inference_onnx.py \
-    --model experiments/clean_minimal_run/weights/best.onnx \
-    --source video.mp4 \
-    --command 0  # 0: Follow, 1: Left, 2: Right, 3: Straight
-```
-
-**TensorRT (Tối ưu hóa tốc độ):**
-```bash
-python examples/jetson_inference_trt.py \
-    --engine experiments/clean_minimal_run/weights/best.engine \
-    --source video.mp4 \
-    --command 0
-```
+-   **Model Config**: `models/neuralPilot.yaml` (Backbone, Head setup).
 
 ## �📂 Project Structure
 
@@ -126,10 +59,6 @@ uv run pytest tests/
 
 # Run specific category (e.g., engine)
 uv run pytest tests/engine/
-
-# Run benchmarks
-uv run python tests/benchmarks/quick_benchmark.py
-```
 
 ## 🏷️ Data Labeling
 

@@ -618,11 +618,11 @@ class DetectionEvaluator:
     """
     Adapter class for existing Validator to use new robust metrics.
     """
-    def __init__(self, num_classes, device, log_dir):
+    def __init__(self, num_classes, device, log_dir, names=None):
         self.nc = num_classes
         self.device = device
         self.log_dir = Path(log_dir) if log_dir else None
-        self.names = {i: str(i) for i in range(num_classes)}
+        self.names = names if names is not None else {i: str(i) for i in range(num_classes)}
         self.stats = [] # list of (tp, conf, pcls, tcls)
         self.iouv = torch.linspace(0.5, 0.95, 10, device=device)
         self.niou = self.iouv.numel()

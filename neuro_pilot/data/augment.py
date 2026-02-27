@@ -214,7 +214,9 @@ class StandardAugmentor(BaseTransform):
                 rotate_deg = 5.0  # Reduced rotation
                 translate = 0.1
                 scale = 0.5
+                shear = 0.2
                 perspective = 0.0
+                fliplr = 0.5
                 hsv_h = 0.015
                 hsv_s = 0.7
                 hsv_v = 0.4
@@ -222,6 +224,8 @@ class StandardAugmentor(BaseTransform):
                 noise_prob = 0.4  # Increased noise
                 blur_prob = 0.1
                 mosaic = 1.0  # Default mosiac probability
+                mixup = 1.0
+                copy_paste = 0.0
             cfg = DummyConfig()
         else:
             cfg = config
@@ -235,35 +239,50 @@ class StandardAugmentor(BaseTransform):
             scale = getattr(cfg, 'scale', 0.5)
             persp = getattr(cfg, 'perspective', 0.0)
 
-            self.transform = A.Compose([
+            cj_intensity = getattr(cfg, 'color_jitter', 0.3)
+            hsv_s_val = getattr(cfg, 'hsv_s', 0.7)
+            hsv_v_val = getattr(cfg, 'hsv_v', 0.4)
+            hsv_h_val = getattr(cfg, 'hsv_h', 0.015)
+
+            transforms = [
                 A.Affine(
                     translate_percent={'x': (-trans, trans), 'y': (-trans, trans)},
                     scale=(1.0 - scale, 1.0 + scale),
                     rotate=(-deg, deg),
+                    shear=(-getattr(cfg, 'shear', 0.0), getattr(cfg, 'shear', 0.0)),
+                    p=0.5 if (deg + trans + scale + getattr(cfg, 'shear', 0.0)) > 0 else 0.0
+                )
+            ]
+            if persp > 0:
+                transforms.append(A.Perspective(scale=(0.0, persp), p=0.5))
+            if (hsv_h_val + hsv_s_val + hsv_v_val) > 0:
+                transforms.append(A.HueSaturationValue(
+                    hue_shift_limit=int(hsv_h_val * 180),
+                    sat_shift_limit=int(hsv_s_val * 255),
+                    val_shift_limit=int(hsv_v_val * 255),
                     p=0.5
-                ),
-                A.Perspective(scale=(0.0, persp), p=0.3) if persp > 0 else A.NoOp(), # 0 to max perspective
-                A.HueSaturationValue(
-                    hue_shift_limit=int(getattr(cfg, 'hsv_h', 0.015) * 180),
-                    sat_shift_limit=int(getattr(cfg, 'hsv_s', 0.7) * 255),
-                    val_shift_limit=int(getattr(cfg, 'hsv_v', 0.4) * 255),
+                ))
+            if cj_intensity > 0:
+                transforms.append(A.RandomBrightnessContrast(
+                    brightness_limit=cj_intensity,
+                    contrast_limit=cj_intensity,
                     p=0.5
-                ),
-                A.RandomBrightnessContrast(
-                    brightness_limit=getattr(cfg, 'color_jitter', 0.3),
-                    contrast_limit=getattr(cfg, 'color_jitter', 0.3),
-                    p=0.5
-                ),
+                ))
+
+            transforms.extend([
                 A.OneOf([A.GaussNoise(p=1.0), A.ISONoise(p=1.0)], p=getattr(cfg, 'noise_prob', 0.4)),
                 A.OneOf([A.MotionBlur(blur_limit=5, p=1.0), A.GaussianBlur(blur_limit=(3, 5), p=1.0)], p=getattr(cfg, 'blur_prob', 0.1)),
-                A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                ToTensorV2()
-            ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids']),
+                # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),  # Normalization is now handled purely in Dataset __getitem__
+                # ToTensorV2()
+            ])
+
+            self.transform = A.Compose(
+                transforms, bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids']),
                keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
         else:
             self.transform = A.Compose([
-                A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-                ToTensorV2()
+                # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+                # ToTensorV2()
             ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids']),
                keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
 
@@ -273,7 +292,8 @@ class StandardAugmentor(BaseTransform):
         logger.info("Mosaic augmentation closed.")
 
     def __call__(self, labels: Dict[str, Any]):
-        img = cv2.cvtColor(labels["img"], cv2.COLOR_BGR2RGB)
+        # Keep as BGR for Albumentations (it supports both). Convert to RGB in dataset later.
+        img = labels["img"]
         bboxes = labels.get("bboxes", [])
         cls = labels.get("cls", labels.get("categories", [])) # Support both keys
         waypoints = labels.get("waypoints", [])

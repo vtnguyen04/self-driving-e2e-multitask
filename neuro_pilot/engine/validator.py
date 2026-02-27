@@ -65,7 +65,8 @@ class Validator(BaseValidator):
 
     def init_metrics(self):
         """Initialize metrics and evaluators."""
-        self.evaluator = DetectionEvaluator(self.cfg.head.num_classes, self.device, self.log_dir)
+        names = getattr(self.model, 'names', None)
+        self.evaluator = DetectionEvaluator(self.cfg.head.num_classes, self.device, self.log_dir, names=names)
         self.total_loss = 0.0
         self.total_l1 = 0.0
 

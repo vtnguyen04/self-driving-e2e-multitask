@@ -220,6 +220,7 @@ class Trainer(BaseTrainer):
         ckpt_dir = self.save_dir
         self.val_logger_obj = MetricLogger(ckpt_dir, "val", "val_metrics.csv")
         viz_cb = VisualizationCallback(ckpt_dir / "viz")
+        # Ensure names are bound properly to VisualizationCallback if already present, otherwise wait
         if hasattr(self.model, 'names'):
             viz_cb.names = self.model.names
 
@@ -233,11 +234,26 @@ class Trainer(BaseTrainer):
         # Data
         from neuro_pilot.data import prepare_dataloaders
         self.train_loader, self.val_loader = prepare_dataloaders(self.cfg)
+
+        # Sync class names from dataset to model
+        ds = self.train_loader.dataset
+        while hasattr(ds, 'dataset'): ds = ds.dataset
+        if hasattr(ds, 'names') and ds.names:
+            if isinstance(ds.names, list):
+                self.model.names = {i: n for i, n in enumerate(ds.names)}
+            else:
+                self.model.names = ds.names
+        else:
+            self.model.names = {i: f"class_{i}" for i in range(self.num_classes)}
+
         self.initialize_anchors(self.train_loader)
 
         # Validator
         self.validator = Validator(self.cfg, self.ema.ema if self.ema else self.model, self.criterion, self.device)
         self.validator.callbacks = self.callbacks # Share callbacks for visualization and logging
+
+        # Re-sync names to viz callback after setting them from Data loader
+        viz_cb.names = self.model.names
 
         # Resume state if requested
         if self.resume:

@@ -4,30 +4,34 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from typing import Union
-try:
-    from omegaconf import OmegaConf
-except (ImportError, ModuleNotFoundError):
-    from unittest.mock import MagicMock
-    OmegaConf = MagicMock()
 
 from neuro_pilot.utils.logger import logger, log_system_info
 from neuro_pilot.engine.task import TaskRegistry
 from neuro_pilot.engine.backend.factory import AutoBackend
-# Ensure default tasks are registered
+
 
 class NeuroPilot(nn.Module):
     """
-    Unified NeuroPilot Model Interface (SOLID + Extensible).
+    Unified NeuroPilot Model Interface.
     Delegates architecture, training, and validation logic to a specific `Task` implementation.
 
     Attributes:
-        task_wrapper (BaseTask): The task implementation (Strategy Pattern).
-        model (nn.Module): The underlying PyTorch model (for easy access).
+        task_wrapper (BaseTask): The task implementation.
+        model (nn.Module): The underlying PyTorch model.
         overrides (dict): Configuration overrides.
     """
-    _system_logged = False  # Class-level flag to avoid spamming logs if multiple instances created
 
-    def __init__(self, model: Union[str, Path, nn.Module] = "neuro_pilot/cfg/models/yolo_style.yaml", task: str = None, scale: str = 'n', **kwargs):
+    _system_logged = (
+        False  # Class-level flag to avoid spamming logs if multiple instances created
+    )
+
+    def __init__(
+        self,
+        model: Union[str, Path, nn.Module] = "neuro_pilot/cfg/models/neuralPilot.yaml",
+        task: str = None,
+        scale: str = "n",
+        **kwargs,
+    ):
         super().__init__()
         if not NeuroPilot._system_logged:
             log_system_info()
@@ -43,46 +47,45 @@ class NeuroPilot(nn.Module):
 
         # Determine and store device
         from neuro_pilot.utils.torch_utils import select_device
-        self.target_device = select_device(kwargs.get('device', ''))
 
-        # Initialize Model/Config
-        # If model is a Module, we wrap it
+        self.target_device = select_device(kwargs.get("device", ""))
+
         if isinstance(model, nn.Module):
-             self.model = model
-             self._init_task(self.task_name, overrides={'model': model})
-             return
+            self.model = model
+            self._init_task(self.task_name, overrides={"model": model})
+            return
 
         # If model is a path/string
         model = str(model)
         p = Path(model)
-
-        if p.exists() and p.suffix in ['.pt', '.pth']:
+        if p.exists() and p.suffix in [".pt", ".pth"]:
             self._load(p, scale=scale)
         else:
-            # Assume it's a config or a new model request
-            # If it's just a name like 'yolo_style.yaml' and not a full path, we might need resolution logic
-            # For now, simplistic path handling
             self._new(model, scale=scale)
 
     def _init_task(self, task_name, overrides=None):
         """Initialize the Task Wrapper."""
         try:
-            TaskClass = TaskRegistry.get(task_name)
+            TaskClass: type = TaskRegistry.get(task_name)
         except ValueError:
             logger.warning(f"Task '{task_name}' not found. Defaulting to 'multitask'.")
             TaskClass = TaskRegistry.get("multitask")
 
         # Initialize System Monitor
         from neuro_pilot.utils.monitor import SystemLogger
+
         self.system_logger = SystemLogger()
-        logger.info(f"System Monitor Initialized. CPU: {self.system_logger.get_metrics()['cpu']}%")
+        logger.info(
+            f"System Monitor Initialized. CPU: {self.system_logger.get_metrics()['cpu']}%"
+        )
 
         # Merge constructor overrides with method overrides
         final_overrides = {**self.overrides, **(overrides or {})}
 
         # Load Config (logic)
         from neuro_pilot.cfg.schema import load_config, deep_update, AppConfig
-        self.cfg_obj = load_config() # Base config
+
+        self.cfg_obj = load_config()  # Base config
 
         # Apply strict config overrides if provided in overrides
         # We only merge keys that exist in AppConfig to avoid polluting with objects/paths
@@ -90,19 +93,34 @@ class NeuroPilot(nn.Module):
         app_keys = set(cfg_dict.keys())
         config_overrides = {k: v for k, v in final_overrides.items() if k in app_keys}
         if config_overrides:
-             cfg_dict = deep_update(cfg_dict, config_overrides)
-             self.cfg_obj = AppConfig(**cfg_dict)
+            cfg_dict = deep_update(cfg_dict, config_overrides)
+            self.cfg_obj = AppConfig(**cfg_dict)
 
         self.task_wrapper = TaskClass(self.cfg_obj, overrides=final_overrides)
 
         # Build model if not provided
-        if not self.model and not (overrides and isinstance(overrides.get('model'), nn.Module)):
+        if not self.model and not (
+            overrides and isinstance(overrides.get("model"), nn.Module)
+        ):
             # If it's a standard multitask model from YAML, use DetectionModel
-            if self.task_name == "multitask" and 'model_cfg' in final_overrides and Path(final_overrides['model_cfg']).suffix in ['.yaml', '.yml']:
+            if (
+                self.task_name == "multitask"
+                and "model_cfg" in final_overrides
+                and Path(final_overrides["model_cfg"]).suffix in [".yaml", ".yml"]
+            ):
                 from neuro_pilot.nn.tasks import DetectionModel
-                scale = final_overrides.get('scale', 'n')
-                skip_heatmap = final_overrides.get('skip_heatmap_inference', self.cfg_obj.head.skip_heatmap_inference)
-                self.model = DetectionModel(final_overrides['model_cfg'], ch=3, nc=self.cfg_obj.head.num_classes, scale=scale, skip_heatmap_inference=skip_heatmap)
+
+                scale = final_overrides.get("scale", "n")
+                skip_heatmap = final_overrides.get(
+                    "skip_heatmap_inference", self.cfg_obj.head.skip_heatmap_inference
+                )
+                self.model = DetectionModel(
+                    final_overrides["model_cfg"],
+                    ch=3,
+                    nc=self.cfg_obj.head.num_classes,
+                    scale=scale,
+                    skip_heatmap_inference=skip_heatmap,
+                )
             else:
                 self.model = self.task_wrapper.build_model()
 
@@ -118,41 +136,49 @@ class NeuroPilot(nn.Module):
         if self.model:
             self.backend = AutoBackend(self.model, device=self.target_device)
 
-    def _new(self, cfg_path: Union[str, Path], scale: str = 'n'):
+    def _new(self, cfg_path: Union[str, Path], scale: str = "n"):
         """Initialize new model from config."""
-        logger.info(f"Initializing NeuroPilot ({self.task_name}) from {cfg_path} (scale={scale})")
-        self._init_task(self.task_name, overrides={'model_cfg': str(cfg_path), 'scale': scale})
+        logger.info(
+            f"Initializing NeuroPilot ({self.task_name}) from {cfg_path} (scale={scale})"
+        )
+        self._init_task(
+            self.task_name, overrides={"model_cfg": str(cfg_path), "scale": scale}
+        )
 
-    def _load(self, weights_path: Union[str, Path], scale: str = 'n'):
+    def _load(self, weights_path: Union[str, Path], scale: str = "n"):
         """Load from checkpoint."""
         logger.info(f"Loading NeuroPilot ({self.task_name}) from {weights_path}")
 
         # Try to extract model config from checkpoint
         # Set weights_only=False for full checkpoint loading (AppConfig, model_cfg, etc.)
-        ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
-        model_cfg = ckpt.get('model_cfg')
-        if not model_cfg and 'args' in ckpt:
-             model_cfg = ckpt['args'].get('model_cfg')
+        ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
+        model_cfg = ckpt.get("model_cfg")
+        if not model_cfg and "args" in ckpt:
+            model_cfg = ckpt["args"].get("model_cfg")
 
         # Check for scale in checkpoint, override by argument if provided
-        ckpt_scale = ckpt.get('scale')
-        if not ckpt_scale and 'args' in ckpt:
-             ckpt_scale = ckpt['args'].get('scale')
+        ckpt_scale = ckpt.get("scale")
+        if not ckpt_scale and "args" in ckpt:
+            ckpt_scale = ckpt["args"].get("scale")
 
-        final_scale = scale if scale != 'n' else (ckpt_scale or 'n')
+        final_scale = scale if scale != "n" else (ckpt_scale or "n")
 
-        overrides = {'model_cfg': model_cfg, 'scale': final_scale} if model_cfg else {'scale': final_scale}
+        overrides = (
+            {"model_cfg": model_cfg, "scale": final_scale}
+            if model_cfg
+            else {"scale": final_scale}
+        )
         self._init_task(self.task_name, overrides=overrides)
         self.task_wrapper.load_weights(weights_path)
         self.model = self.task_wrapper.model
 
         if self.model:
-             self.model.to(self.target_device)
-             # Restore metadata
-             if 'names' in ckpt:
-                  self.model.names = ckpt['names']
-             if 'cfg' in ckpt:
-                  self.cfg_obj = ckpt['cfg']
+            self.model.to(self.target_device)
+            # Restore metadata
+            if "names" in ckpt:
+                self.model.names = ckpt["names"]
+            if "cfg" in ckpt:
+                self.cfg_obj = ckpt["cfg"]
 
         # Re-initialize backend with loaded model
         self.backend = AutoBackend(self.model, device=self.target_device)
@@ -174,7 +200,7 @@ class NeuroPilot(nn.Module):
         # Training Loop Logic
         # -------------------------------------------------------
         if not self.task_wrapper:
-             raise RuntimeError("Task not initialized.")
+            raise RuntimeError("Task not initialized.")
 
         # Dynamic Configuration Mapping
         # Automatically map flat kwargs to nested config sections based on AppConfig schema
@@ -187,45 +213,48 @@ class NeuroPilot(nn.Module):
         # 1. Map top-level sections
         # 2. Map fields within sections
         for section_name, field_info in AppConfig.model_fields.items():
-            if section_name == 'model_config_path': continue
+            if section_name == "model_config_path":
+                continue
 
             # Get the model class for this section (e.g., TrainerConfig)
             section_cls = field_info.annotation
-            if hasattr(section_cls, 'model_fields'):
+            if hasattr(section_cls, "model_fields"):
                 for key in section_cls.model_fields.keys():
                     config_map[key] = section_name
 
                     # Special handling for deeply nested AugmentConfig within DataConfig
-                    if section_name == 'data' and key == 'augment':
-                         # Map fields of AugmentConfig
-                         augment_cls = section_cls.model_fields['augment'].annotation
-                         if hasattr(augment_cls, 'model_fields'):
-                             for aug_key in augment_cls.model_fields.keys():
-                                 config_map[aug_key] = 'data.augment'
+                    if section_name == "data" and key == "augment":
+                        # Map fields of AugmentConfig
+                        augment_cls = section_cls.model_fields["augment"].annotation
+                        if hasattr(augment_cls, "model_fields"):
+                            for aug_key in augment_cls.model_fields.keys():
+                                config_map[aug_key] = "data.augment"
 
         mapped_kwargs = {}
         for k, v in kwargs.items():
             # Special handling for 'augment' bool flag
-            if k == 'augment' and isinstance(v, bool):
-                 mapped_kwargs.setdefault('data', {}).setdefault('augment', {})['enabled'] = v
-                 continue
+            if k == "augment" and isinstance(v, bool):
+                mapped_kwargs.setdefault("data", {}).setdefault("augment", {})[
+                    "enabled"
+                ] = v
+                continue
 
             # Special handling for 'data' arg (dataset path)
             # Avoid conflict with 'data' section
-            if k == 'data' and isinstance(v, str):
-                 mapped_kwargs.setdefault('data', {})['dataset_yaml'] = v
-                 continue
+            if k == "data" and isinstance(v, str):
+                mapped_kwargs.setdefault("data", {})["dataset_yaml"] = v
+                continue
 
             if k in config_map:
                 section = config_map[k]
-                if section == 'data' and k == 'data':
+                if section == "data" and k == "data":
                     # Edge case where 'data' maps to 'data' section but user passed string?
                     # Handled above.
                     pass
 
-                if '.' in section:
+                if "." in section:
                     # Handle nested section (e.g., data.augment)
-                    parts = section.split('.')
+                    parts = section.split(".")
                     target = mapped_kwargs
                     for part in parts:
                         target = target.setdefault(part, {})
@@ -235,11 +264,13 @@ class NeuroPilot(nn.Module):
                     # e.g. section='data'. mapped_kwargs['data'] should be a dict.
                     target_dict = mapped_kwargs.setdefault(section, {})
                     if not isinstance(target_dict, dict):
-                         # If it's already a scalar (e.g. string from previous bad mapping), fix it?
-                         # Or error. But with 'data' handled above, likely safe.
-                         logger.warning(f"Conflict mapping '{k}' to section '{section}'. Existing value is not a dict: {target_dict}")
-                         # Recover by making it a dict if possible or just overwrite?
-                         # For now, let's assume 'data' was the main culprit.
+                        # If it's already a scalar (e.g. string from previous bad mapping), fix it?
+                        # Or error. But with 'data' handled above, likely safe.
+                        logger.warning(
+                            f"Conflict mapping '{k}' to section '{section}'. Existing value is not a dict: {target_dict}"
+                        )
+                        # Recover by making it a dict if possible or just overwrite?
+                        # For now, let's assume 'data' was the main culprit.
                     else:
                         target_dict[k] = v
             else:
@@ -253,7 +284,9 @@ class NeuroPilot(nn.Module):
         self.overrides = deep_update(self.overrides, mapped_kwargs)
 
         # Re-apply overrides to task_wrapper
-        self.task_wrapper.overrides = deep_update(self.task_wrapper.overrides, mapped_kwargs)
+        self.task_wrapper.overrides = deep_update(
+            self.task_wrapper.overrides, mapped_kwargs
+        )
 
         # Update task_wrapper config
         cfg_dict = self.cfg_obj.model_dump()
@@ -272,14 +305,22 @@ class NeuroPilot(nn.Module):
                 logger.info(f"Resuming from inferred checkpoint: {new_resume}")
                 # Update everything
                 self.cfg_obj.trainer.resume = new_resume
-                self.task_wrapper.overrides = deep_update(self.task_wrapper.overrides, {'trainer': {'resume': new_resume}})
+                self.task_wrapper.overrides = deep_update(
+                    self.task_wrapper.overrides, {"trainer": {"resume": new_resume}}
+                )
             else:
-                logger.warning(f"Resume requested but {last_ckpt} not found. Starting from scratch.")
+                logger.warning(
+                    f"Resume requested but {last_ckpt} not found. Starting from scratch."
+                )
                 self.cfg_obj.trainer.resume = False
-                self.task_wrapper.overrides = deep_update(self.task_wrapper.overrides, {'trainer': {'resume': False}})
+                self.task_wrapper.overrides = deep_update(
+                    self.task_wrapper.overrides, {"trainer": {"resume": False}}
+                )
         elif self.cfg_obj.trainer.resume:
             # Path provided
-            logger.info(f"Resuming from specified checkpoint: {self.cfg_obj.trainer.resume}")
+            logger.info(
+                f"Resuming from specified checkpoint: {self.cfg_obj.trainer.resume}"
+            )
 
         trainer = self.task_wrapper.get_trainer()
 
@@ -299,6 +340,7 @@ class NeuroPilot(nn.Module):
         """
         if self.predictor is None:
             from neuro_pilot.engine.predictor import Predictor
+
             self.predictor = Predictor(self.cfg_obj, self.model, self.target_device)
 
         return self.predictor(source, **kwargs)
@@ -308,70 +350,80 @@ class NeuroPilot(nn.Module):
         Export the model to a specific format (e.g., ONNX, TensorRT).
         """
         from neuro_pilot.engine.exporter import Exporter
+
         exporter = Exporter(self.cfg_obj, self.model, self.device)
         return exporter(**kwargs)
 
     def val(self, **kwargs):
         """Validate locally using the task's validator."""
         validator = self.task_wrapper.get_validator()
-        dataloader = kwargs.get('dataloader')
+        dataloader = kwargs.get("dataloader")
         if dataloader is None:
-             # Try to prepare dataloader from config
-             from neuro_pilot.data import prepare_dataloaders
-             _, dataloader = prepare_dataloaders(self.cfg_obj)
+            # Try to prepare dataloader from config
+            from neuro_pilot.data import prepare_dataloaders
+
+            _, dataloader = prepare_dataloaders(self.cfg_obj)
         return validator(dataloader)
 
     def benchmark(self, imgsz=640, half=True, batch=1, device=None):
         """Benchmark model performance."""
         import time
+
         device = device or self.device
         model = self.model.to(device)
-        if half and device != 'cpu':
-             model.half()
+        if half and device != "cpu":
+            model.half()
 
         # Warmup
         img = torch.zeros(batch, 3, imgsz, imgsz).to(device)
-        if half and device != 'cpu': img = img.half()
+        if half and device != "cpu":
+            img = img.half()
         cmd = torch.zeros(batch, 4).to(device)
-        if half and device != 'cpu': cmd = cmd.half()
+        if half and device != "cpu":
+            cmd = cmd.half()
 
         for _ in range(10):
             model(img, cmd=cmd)
 
         # Timed loop
         n = 100
-        torch.cuda.synchronize() if device != 'cpu' else None
+        torch.cuda.synchronize() if device != "cpu" else None
         t1 = time.time()
         for _ in range(n):
             model(img, cmd=cmd)
-        torch.cuda.synchronize() if device != 'cpu' else None
+        torch.cuda.synchronize() if device != "cpu" else None
         t2 = time.time()
 
-        dt = (t2 - t1) / n * 1000 # ms
+        dt = (t2 - t1) / n * 1000  # ms
         fps = 1000 / dt * batch
-        logger.info(f"Benchmark: {imgsz}x{imgsz}, batch={batch}, device={device}, half={half}")
+        logger.info(
+            f"Benchmark: {imgsz}x{imgsz}, batch={batch}, device={device}, half={half}"
+        )
         logger.info(f"  Latency: {dt:.2f} ms")
         logger.info(f"  Throughput: {fps:.2f} FPS")
-        return {'latency_ms': dt, 'fps': fps}
+        return {"latency_ms": dt, "fps": fps}
 
     def fuse(self):
         """Fuse layers."""
-        if hasattr(self.model, 'fuse'):
-             self.model.fuse()
+        if hasattr(self.model, "fuse"):
+            self.model.fuse()
         return self
 
     def info(self, verbose=True):
-        return self.model.info(verbose=verbose) if hasattr(self.model, 'info') else None
+        return self.model.info(verbose=verbose) if hasattr(self.model, "info") else None
 
     def save(self, filename: Union[str, Path]):
         """Save model to file."""
         filename = Path(filename)
         filename.parent.mkdir(parents=True, exist_ok=True)
-        torch.save({
-            'state_dict': self.model.state_dict(),
-            'task': self.task_name,
-            'overrides': self.overrides
-        }, filename)
+        torch.save(
+            {
+                "state_dict": self.model.state_dict(),
+                "task": self.task_name,
+                "overrides": self.overrides,
+            },
+            filename,
+        )
 
     @property
     def device(self):
@@ -380,16 +432,16 @@ class NeuroPilot(nn.Module):
                 return next(self.model.parameters()).device
             except StopIteration:
                 pass
-        return torch.device('cpu')
+        return torch.device("cpu")
 
     @property
     def names(self):
         """Returns class names."""
-        if hasattr(self.task_wrapper, 'names') and self.task_wrapper.names:
-             return self.task_wrapper.names
-        if hasattr(self.model, 'names') and self.model.names:
-             return self.model.names
-        num_classes = getattr(self.cfg_obj.head, 'num_classes', 14)
+        if hasattr(self.task_wrapper, "names") and self.task_wrapper.names:
+            return self.task_wrapper.names
+        if hasattr(self.model, "names") and self.model.names:
+            return self.model.names
+        num_classes = getattr(self.cfg_obj.head, "num_classes", 14)
         return {i: f"class_{i}" for i in range(num_classes)}
 
     def __call__(self, source, **kwargs):
@@ -405,8 +457,10 @@ class NeuroPilot(nn.Module):
             pass
 
         # If valid attribute of THIS class is missing, raise AttributeError to prevent recursion/confusion
-        if attr in {'model', 'task_wrapper', 'overrides'}:
-             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
+        if attr in {"model", "task_wrapper", "overrides"}:
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{attr}'"
+            )
 
         # Delegate to wrapped model
         return getattr(self.model, attr)

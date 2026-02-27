@@ -332,6 +332,9 @@ def train(cfg: TrainConfig) -> None:
     data_cfg.data.augment.mixup = 0.0
     data_cfg.data.augment.rotate_deg = 2.0
     data_cfg.data.augment.scale = 0.1
+    data_cfg.data.augment.hsv_v = 0.0
+    data_cfg.data.augment.hsv_s = 0.0
+    data_cfg.data.augment.color_jitter = 0.0
     data_cfg.data.augment.fliplr = 0.0
     logger.info("Configured Light Augmentation (No Mosaic/Mixup) & Cosine LR")
 
