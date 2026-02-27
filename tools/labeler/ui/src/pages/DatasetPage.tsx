@@ -112,6 +112,7 @@ export const DatasetPage: React.FC = () => {
   const [classes, setClasses] = useState<string[]>([]);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [filterClass, setFilterClass] = useState<number | null>(null);
+  const [filterCommand, setFilterCommand] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'labeled' | 'unlabeled'>('all');
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -139,7 +140,8 @@ export const DatasetPage: React.FC = () => {
             offset: currentOffset,
             project_id: projectId,
             is_labeled: filterStatus === 'all' ? undefined : (filterStatus === 'labeled'),
-            class_id: filterClass ?? undefined
+            class_id: filterClass ?? undefined,
+            command: filterCommand ?? undefined
         });
 
         if (isLoadMore) {
@@ -157,7 +159,7 @@ export const DatasetPage: React.FC = () => {
 
   useEffect(() => {
     loadData(false).catch(console.error);
-  }, [projectId, filterStatus, filterClass]);
+  }, [projectId, filterStatus, filterClass, filterCommand]);
 
   if (!stats) return <div className="h-screen flex items-center justify-center text-accent font-cyber animate-pulse tracking-[0.5em]">SYSTEM_INITIALIZING...</div>;
 
@@ -176,6 +178,12 @@ export const DatasetPage: React.FC = () => {
                 <p className="text-white text-base font-bold font-mono uppercase tracking-[0.15em]">Project Integrity: High-Performance</p>
             </div>
             <div className="flex gap-4">
+                <button
+                    onClick={() => navigate(`/analytics/${projectId}`)}
+                    className="px-6 py-3 bg-accent/10 text-accent font-bold rounded-2xl hover:scale-105 transition-all border-2 border-accent/30 hover:border-accent/60 flex items-center gap-2 uppercase text-xs"
+                >
+                    <BarChart3 className="w-4 h-4" /> View Analytics
+                </button>
                 <button
                     onClick={async () => {
                         if (!confirm(`⚠️ DELETE PROJECT?\n\nThis will permanently delete ALL samples and data.\n\nType 'DELETE' to confirm.`)) return;
@@ -302,6 +310,17 @@ export const DatasetPage: React.FC = () => {
                     >
                         <option value="">ALL CLASSES</option>
                         {classes.map((c, i) => <option key={i} value={i}>{c}</option>)}
+                    </select>
+                    <select
+                        className="bg-[#1a1a1c] border-2 border-white/30 text-white text-base font-black rounded-xl px-6 py-3 outline-none hover:border-accent transition-colors"
+                        value={filterCommand ?? ''}
+                        onChange={(e) => setFilterCommand(e.target.value ? parseInt(e.target.value) : null)}
+                    >
+                        <option value="">ALL COMMANDS</option>
+                        <option value="0">FOLLOW_LANE</option>
+                        <option value="1">TURN_LEFT</option>
+                        <option value="2">TURN_RIGHT</option>
+                        <option value="3">STRAIGHT</option>
                     </select>
                 </div>
             </div>

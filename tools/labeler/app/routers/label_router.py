@@ -30,6 +30,10 @@ def get_label_service(repos = Depends(get_repositories)):
 def get_projects(service: LabelService = Depends(get_label_service)):
     return service.get_projects()
 
+@router.get("/projects/{project_id}/analytics")
+def get_analytics(project_id: int, service: LabelService = Depends(get_label_service)):
+    return service.get_analytics(project_id)
+
 @router.post("/projects")
 def create_project(project: ProjectCreate, service: LabelService = Depends(get_label_service)):
     return service.create_project(project.name, project.description, project.classes)
@@ -39,8 +43,8 @@ def get_stats(project_id: Optional[int] = None, service: LabelService = Depends(
     return service.get_stats(project_id)
 
 @router.get("/")
-def list_labels(limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None, split: Optional[str] = None, project_id: Optional[int] = None, class_id: Optional[int] = None, service: LabelService = Depends(get_label_service)):
-    return service.get_samples(limit, offset, is_labeled, split, project_id, class_id)
+def list_labels(limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None, split: Optional[str] = None, project_id: Optional[int] = None, class_id: Optional[int] = None, command: Optional[int] = None, service: LabelService = Depends(get_label_service)):
+    return service.get_samples(limit, offset, is_labeled, split, project_id, class_id, command)
 
 # --- IMAGE SERVING ---
 

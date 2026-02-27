@@ -25,8 +25,8 @@ class LabelService:
 
     def get_samples(self, limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None,
                     split: Optional[str] = None, project_id: Optional[int] = None,
-                    class_id: Optional[int] = None):
-        samples = self.sample_repo.get_all_samples(limit, offset, is_labeled, split, project_id, class_id)
+                    class_id: Optional[int] = None, command: Optional[int] = None):
+        samples = self.sample_repo.get_all_samples(limit, offset, is_labeled, split, project_id, class_id, command)
         for s in samples:
             if s.get('data'):
                 try:
@@ -236,6 +236,37 @@ class LabelService:
             conn.commit()
 
         return {"status": "success", "classes": classes}
+
+    def get_analytics(self, project_id: int):
+        classes = self.project_repo.get_classes(project_id)
+        raw_stats = self.sample_repo.get_analytics(project_id)
+
+        # 1. Map class IDs to names
+        class_distribution = []
+        for class_id, count in raw_stats['class_distribution'].items():
+            if int(class_id) < len(classes):
+                name = classes[int(class_id)]
+            else:
+                name = f"Unknown-{class_id}"
+            class_distribution.append({"id": int(class_id), "name": name, "count": count})
+        class_distribution.sort(key=lambda x: x['count'], reverse=True)
+        raw_stats['class_distribution'] = class_distribution
+
+        # 2. Map command IDs to names
+        COMMAND_NAMES = {
+            0: "FOLLOW_LANE",
+            1: "TURN_LEFT",
+            2: "TURN_RIGHT",
+            3: "STRAIGHT"
+        }
+        command_distribution = []
+        for cmd_id, count in raw_stats.get('command_distribution', {}).items():
+            name = COMMAND_NAMES.get(int(cmd_id), f"Unknown-{cmd_id}")
+            command_distribution.append({"id": int(cmd_id), "name": name, "count": count})
+        command_distribution.sort(key=lambda x: x['count'], reverse=True)
+        raw_stats['command_distribution'] = command_distribution
+
+        return raw_stats
 
     def add_sample(self, filename: str, image_path: str, project_id: int):
         return self.sample_repo.add_sample(filename, image_path, project_id)

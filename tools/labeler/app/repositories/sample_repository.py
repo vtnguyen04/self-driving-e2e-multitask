@@ -22,7 +22,7 @@ class SampleRepository(BaseRepository):
 
     def get_all_samples(self, limit: int = 100, offset: int = 0, is_labeled: Optional[bool] = None,
                        split: Optional[str] = None, project_id: Optional[int] = None,
-                       class_id: Optional[int] = None) -> List[dict]:
+                       class_id: Optional[int] = None, command: Optional[int] = None) -> List[dict]:
         query = "SELECT image_name as filename, is_labeled, updated_at, data, image_path FROM samples"
         where_clauses = []
         params = []
@@ -42,6 +42,10 @@ class SampleRepository(BaseRepository):
         if class_id is not None:
             where_clauses.append("EXISTS (SELECT 1 FROM json_each(data, '$.bboxes') WHERE json_extract(value, '$.category') = ?)")
             params.append(class_id)
+
+        if command is not None:
+            where_clauses.append("json_extract(data, '$.command') = ?")
+            params.append(command)
 
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
@@ -142,4 +146,59 @@ class SampleRepository(BaseRepository):
                 "test": get_count("test"),
                 "labeled": get_count(labeled=True),
                 "total": get_count()
+            }
+    def get_analytics(self, project_id: int):
+        with self._get_connection() as conn:
+            # 1. Class Distribution
+            class_dist_query = """
+                SELECT
+                    json_extract(value, '$.category') as class_id,
+                    COUNT(*) as count
+                FROM samples, json_each(data, '$.bboxes')
+                WHERE project_id = ?
+                GROUP BY class_id
+            """
+            class_dist_rows = conn.execute(class_dist_query, (project_id,)).fetchall()
+            class_dist = {row['class_id']: row['count'] for row in class_dist_rows}
+
+            # 2. Command Distribution
+            cmd_dist_query = """
+                SELECT
+                    json_extract(data, '$.command') as command_id,
+                    COUNT(*) as count
+                FROM samples
+                WHERE project_id = ? AND is_labeled = 1
+                GROUP BY command_id
+            """
+            cmd_dist_rows = conn.execute(cmd_dist_query, (project_id,)).fetchall()
+            cmd_dist = {row['command_id']: row['count'] for row in cmd_dist_rows if row['command_id'] is not None}
+
+            # 3. Annotation Stats
+            stats_query = """
+                SELECT
+                    COUNT(*) as total_samples,
+                    SUM(is_labeled) as labeled_samples,
+                    SUM(json_array_length(json_extract(data, '$.bboxes'))) as total_bboxes,
+                    SUM(json_array_length(json_extract(data, '$.waypoints'))) as total_waypoints
+                FROM samples
+                WHERE project_id = ?
+            """
+            stats_row = conn.execute(stats_query, (project_id,)).fetchone()
+
+            # 4. Samples with Waypoints
+            wp_samples_query = """
+                SELECT COUNT(*)
+                FROM samples
+                WHERE project_id = ? AND json_array_length(json_extract(data, '$.waypoints')) > 0
+            """
+            wp_samples = conn.execute(wp_samples_query, (project_id,)).fetchone()[0]
+
+            return {
+                "class_distribution": class_dist,
+                "command_distribution": cmd_dist,
+                "total_samples": stats_row['total_samples'],
+                "labeled_samples": stats_row['labeled_samples'],
+                "total_bboxes": stats_row['total_bboxes'] or 0,
+                "total_waypoints": stats_row['total_waypoints'] or 0,
+                "samples_with_waypoints": wp_samples
             }

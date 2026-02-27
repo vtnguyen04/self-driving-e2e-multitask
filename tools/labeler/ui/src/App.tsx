@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { AnalyticsPage } from './pages/AnalyticsPage';
 import { AnnotatePage } from './pages/AnnotatePage';
 import { DatasetPage } from './pages/DatasetPage';
 import { ProjectsPage } from './pages/ProjectsPage';
@@ -13,6 +14,7 @@ function App() {
           <Route path="/dataset/:id" element={<DatasetPage />} />
           <Route path="/annotate/:id" element={<AnnotatePage />} />
           <Route path="/versions/:id" element={<VersionsPage />} />
+          <Route path="/analytics/:id" element={<AnalyticsPage />} />
         </Routes>
       </div>
     </BrowserRouter>

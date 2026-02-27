@@ -1,5 +1,5 @@
 import { clsx, type ClassValue } from 'clsx';
-import { BarChart2, BoxSelect, History, Home, Layout } from 'lucide-react';
+import { BarChart2, BoxSelect, History, Home, Layout, PieChart } from 'lucide-react';
 import React from 'react';
 import { NavLink, useParams } from 'react-router-dom';
 import { twMerge } from 'tailwind-merge';
@@ -18,6 +18,7 @@ export const Sidebar: React.FC = () => {
 
   const projectItems = [
     { icon: BarChart2, label: 'Dataset', path: `/dataset/${projectId}` },
+    { icon: PieChart, label: 'Analytics', path: `/analytics/${projectId}` },
     { icon: BoxSelect, label: 'Annotate', path: `/annotate/${projectId}` },
     { icon: History, label: 'Versions', path: `/versions/${projectId}` },
   ];
