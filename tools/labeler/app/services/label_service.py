@@ -36,7 +36,6 @@ class LabelService:
                     pass
         return samples
 
-
     def _heal_data(self, data: dict) -> dict:
         """Force-convert legacy data formats to modern object-based format."""
         # 1. BBoxes Conversion
@@ -180,6 +179,63 @@ class LabelService:
     def delete_project(self, project_id: int):
         self.sample_repo.delete_by_project(project_id)
         return self.project_repo.delete_project(project_id)
+
+    def delete_class(self, project_id: int, class_index: int):
+        classes = self.project_repo.get_classes(project_id)
+        if class_index < 0 or class_index >= len(classes):
+            return {"status": "error", "message": "Invalid class index"}
+
+        del classes[class_index]
+        self.project_repo.update_classes(project_id, classes)
+
+        import sqlite3
+        import json
+
+        def fix_json(data_str, removed_id):
+            if not data_str: return data_str, False
+            try:
+                data = json.loads(data_str)
+            except:
+                return data_str, False
+            modified = False
+            if "bboxes" in data:
+                new_boxes = []
+                for box in data["bboxes"]:
+                    cat = box.get("category")
+                    if cat is None:
+                        new_boxes.append(box)
+                        continue
+                    if cat == removed_id:
+                        modified = True
+                        continue
+                    elif cat > removed_id:
+                        box["category"] = cat - 1
+                        modified = True
+                        new_boxes.append(box)
+                    else:
+                        new_boxes.append(box)
+                if modified:
+                    data["bboxes"] = new_boxes
+            return json.dumps(data), modified
+
+        with sqlite3.connect(Config.DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT id, data FROM samples WHERE project_id = ? AND data IS NOT NULL", (project_id,))
+            for row in c.fetchall():
+                sid, dstr = row
+                new_dstr, mod = fix_json(dstr, class_index)
+                if mod:
+                    c.execute("UPDATE samples SET data = ? WHERE id = ?", (new_dstr, sid))
+
+            c.execute("SELECT id, data FROM version_items WHERE data IS NOT NULL AND version_id IN (SELECT id FROM dataset_versions WHERE project_id = ?)", (project_id,))
+            for row in c.fetchall():
+                vid, dstr = row
+                new_dstr, mod = fix_json(dstr, class_index)
+                if mod:
+                    c.execute("UPDATE version_items SET data = ? WHERE id = ?", (new_dstr, vid))
+            conn.commit()
+
+        return {"status": "success", "classes": classes}
 
     def add_sample(self, filename: str, image_path: str, project_id: int):
         return self.sample_repo.add_sample(filename, image_path, project_id)

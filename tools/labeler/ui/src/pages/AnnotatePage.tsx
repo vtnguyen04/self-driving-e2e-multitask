@@ -34,6 +34,8 @@ export const AnnotatePage: React.FC = () => {
   const [history, setHistory] = useState<CurrentDataState[]>([]);
   const [selectedBBoxIdx, setSelectedBBoxIdx] = useState<number | null>(null);
   const [filter, setFilter] = useState<'all' | 'labeled' | 'unlabeled'>(initialFile ? 'all' : 'unlabeled');
+  const [filterClass, setFilterClass] = useState<number | null>(null);
+  const [isFilterClassOpen, setIsFilterClassOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'none' | 'saving' | 'saved' | 'error'>('none');
   const [isAutoSaveEnabled, setIsAutoSaveEnabled] = useState(true);
   const [isLoadingData, setIsLoadingData] = useState(false);
@@ -51,6 +53,7 @@ export const AnnotatePage: React.FC = () => {
 
   const initialized = useRef(false);
 
+
   const loadClasses = useCallback(async () => {
     try {
         const list = await API.labels.getClasses(projectId);
@@ -64,17 +67,53 @@ export const AnnotatePage: React.FC = () => {
     const list = await API.labels.list({
         limit: 5000,
         project_id: projectId,
-        is_labeled: filter === 'all' ? undefined : (filter === 'labeled')
+        is_labeled: filter === 'all' ? undefined : (filter === 'labeled'),
+        class_id: filterClass ?? undefined
     });
     setSamples(list);
-  }, [projectId, filter]);
+  }, [projectId, filter, filterClass]);
 
   useEffect(() => {
     loadClasses();
     loadFiles();
   }, [loadClasses, loadFiles]);
 
+  const handleSave = useCallback(async (silent = false) => {
+    if (!selectedFilename || isLoadingData) return;
+    if (!silent) setSaveStatus('saving');
+    try {
+        const dataToSave = {
+          command: currentData.command,
+          bboxes: currentData.bboxes,
+          waypoints: currentData.waypoints,
+          control_points: currentData.control_points
+        };
+        await API.labels.save(selectedFilename, dataToSave);
+        lastSavedDataJson.current = JSON.stringify(dataToSave);
+        const isActuallyLabeled = currentData.bboxes.length > 0 || currentData.waypoints.length > 0;
+        setSamples(prev => prev.map(s => s.filename === selectedFilename ? { ...s, is_labeled: isActuallyLabeled } : s));
+        if (!silent) setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('none'), 2000);
+    } catch (err) {
+        console.error(err);
+        setSaveStatus('error');
+    }
+  }, [selectedFilename, currentData, isLoadingData]);
+
   const handleSelect = useCallback(async (filename: string) => {
+    // Save-Before-Select Logic
+    if (selectedFilename && !isLoadingData) {
+        const currentDataJson = JSON.stringify(currentData);
+        if (currentDataJson !== lastSavedDataJson.current) {
+            setSaveStatus('saving');
+            try {
+                await handleSave(true);
+            } catch (e) {
+                console.error("Auto-save before navigation failed", e);
+            }
+        }
+    }
+
     setIsLoadingData(true);
     setSelectedFilename(filename);
     setSelectedBBoxIdx(null);
@@ -93,7 +132,7 @@ export const AnnotatePage: React.FC = () => {
     } finally {
         setIsLoadingData(false);
     }
-  }, [setSearchParams]);
+  }, [setSearchParams, selectedFilename, currentData, handleSave, isLoadingData]);
 
   const handleUpdate = useCallback((updated: Partial<Sample>) => {
     const finalUpdate: Partial<CurrentDataState> = { ...updated };
@@ -139,28 +178,6 @@ export const AnnotatePage: React.FC = () => {
     }
   }, [history]);
 
-  const handleSave = useCallback(async (silent = false) => {
-    if (!selectedFilename || isLoadingData) return;
-    if (!silent) setSaveStatus('saving');
-    try {
-        const dataToSave = {
-          command: currentData.command,
-          bboxes: currentData.bboxes,
-          waypoints: currentData.waypoints,
-          control_points: currentData.control_points
-        };
-        await API.labels.save(selectedFilename, dataToSave);
-        lastSavedDataJson.current = JSON.stringify(dataToSave);
-        const isActuallyLabeled = currentData.bboxes.length > 0 || currentData.waypoints.length > 0;
-        setSamples(prev => prev.map(s => s.filename === selectedFilename ? { ...s, is_labeled: isActuallyLabeled } : s));
-        if (!silent) setSaveStatus('saved');
-        setTimeout(() => setSaveStatus('none'), 2000);
-    } catch (err) {
-        console.error(err);
-        setSaveStatus('error');
-    }
-  }, [selectedFilename, currentData, isLoadingData]);
-
   // Auto-save effect
   useEffect(() => {
     if (!selectedFilename || !isAutoSaveEnabled || isLoadingData) return;
@@ -169,15 +186,7 @@ export const AnnotatePage: React.FC = () => {
     const currentDataJson = JSON.stringify(currentData);
     if (currentDataJson === lastSavedDataJson.current) return;
 
-    const timer = setTimeout(() => {
-        setSaveStatus('saving');
-        handleSave(true).then(() => {
-            setSaveStatus('saved');
-            setTimeout(() => setSaveStatus('none'), 2000);
-        }).catch(() => setSaveStatus('error'));
-    }, 1000);
-
-    return () => clearTimeout(timer);
+    handleSave(true);
   }, [currentData, selectedFilename, handleSave, isAutoSaveEnabled, isLoadingData]);
 
   const handleSpawnTemplate = (type: 'straight' | 'left' | 'right') => {
@@ -224,13 +233,20 @@ export const AnnotatePage: React.FC = () => {
   }, [selectedFilename, mode, handleUndo, samples, handleSelect, handleSave]);
 
   useEffect(() => {
-    if (samples.length > 0 && !initialized.current) {
-        if (initialFile && samples.some(s => s.filename === initialFile)) {
-            handleSelect(initialFile).catch(console.error);
-        } else if (!selectedFilename) {
+    if (samples.length > 0) {
+        const isCurrentInSamples = samples.some(s => s.filename === selectedFilename);
+
+        if (!initialized.current) {
+            if (initialFile && samples.some(s => s.filename === initialFile)) {
+                handleSelect(initialFile).catch(console.error);
+            } else if (!selectedFilename) {
+                handleSelect(samples[0].filename).catch(console.error);
+            }
+            initialized.current = true;
+        } else if (selectedFilename && !isCurrentInSamples) {
+            // Current file disappeared from filtered list, jump to first
             handleSelect(samples[0].filename).catch(console.error);
         }
-        initialized.current = true;
     }
   }, [samples, initialFile, handleSelect, selectedFilename]);
 
@@ -256,8 +272,47 @@ export const AnnotatePage: React.FC = () => {
 
         <div className="flex items-center gap-6">
             <div className="flex bg-white/10 rounded-xl p-1 border border-white/10 shadow-inner">
-                <button onClick={() => { setFilter('unlabeled'); initialized.current = false; }} className={`px-5 py-2 text-sm font-black rounded-lg transition-all ${filter === 'unlabeled' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>TODO</button>
-                <button onClick={() => { setFilter('all'); initialized.current = false; }} className={`px-5 py-2 text-sm font-black rounded-lg transition-all ${filter === 'all' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>ALL</button>
+                <button onClick={() => { setFilter('unlabeled'); initialized.current = false; }} className={`px-4 py-2 text-sm font-black rounded-lg transition-all ${filter === 'unlabeled' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>TODO</button>
+                <button onClick={() => { setFilter('labeled'); initialized.current = false; }} className={`px-4 py-2 text-sm font-black rounded-lg transition-all ${filter === 'labeled' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>COMPLETED</button>
+                <button onClick={() => { setFilter('all'); initialized.current = false; }} className={`px-4 py-2 text-sm font-black rounded-lg transition-all ${filter === 'all' ? 'bg-accent text-black shadow-lg' : 'text-white hover:text-white'}`}>ALL</button>
+            </div>
+
+            <div className="relative">
+                <button
+                    onClick={() => setIsFilterClassOpen(!isFilterClassOpen)}
+                    className="flex items-center gap-3 bg-white/10 border-2 border-white/20 text-white text-sm font-black rounded-xl px-5 py-2.5 hover:border-accent transition-all min-w-[180px] shadow-lg group"
+                >
+                    <Search className={`w-4 h-4 transition-colors ${filterClass !== null ? 'text-accent' : 'text-white/40'}`} />
+                    <span className="flex-1 text-left uppercase truncate">
+                        {filterClass !== null ? `${filterClass}: ${classes[filterClass]}` : 'ALL CLASSES'}
+                    </span>
+                    <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${isFilterClassOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                {isFilterClassOpen && (
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsFilterClassOpen(false)} />
+                        <div className="absolute top-full left-0 mt-2 w-full bg-[#0d0d15] border-2 border-accent/30 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div className="max-h-64 overflow-y-auto cyber-scrollbar py-2">
+                                <button
+                                    onClick={() => { setFilterClass(null); initialized.current = false; setIsFilterClassOpen(false); }}
+                                    className={`w-full px-5 py-3 text-left text-sm font-black uppercase tracking-wider transition-colors hover:bg-accent/10 ${filterClass === null ? 'bg-accent/20 text-accent' : 'text-white/60'}`}
+                                >
+                                    ALL CLASSES
+                                </button>
+                                {classes.map((c, i) => (
+                                    <button
+                                        key={i}
+                                        onClick={() => { setFilterClass(i); initialized.current = false; setIsFilterClassOpen(false); }}
+                                        className={`w-full px-5 py-3 text-left text-sm font-black uppercase tracking-wider transition-colors border-t border-white/5 hover:bg-accent/10 ${filterClass === i ? 'bg-accent/20 text-accent' : 'text-white/60'}`}
+                                    >
+                                        {i}: {c}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                )}
             </div>
 
             <div className="flex items-center gap-4 px-4 bg-white/5 rounded-2xl border border-white/10 py-1">
@@ -441,7 +496,18 @@ export const AnnotatePage: React.FC = () => {
                         <div key={i} className="flex gap-5 group">
                             <div className="w-20 flex items-center justify-center font-black text-lg text-accent bg-accent/10 rounded-3xl border-2 border-accent/20">#{i}</div>
                             <input value={c} onChange={(e) => { const next = [...classes]; next[i] = e.target.value; setClasses(next); }} className="flex-1 bg-black border-2 border-white/20 rounded-3xl p-5 text-[18px] text-white font-black focus:border-accent outline-none transition-all shadow-inner" />
-                            <button onClick={() => { const next = classes.filter((_, idx) => idx !== i); setClasses(next); }} className="p-5 hover:bg-red-500/20 text-white hover:text-red-500 rounded-3xl transition-all border border-transparent hover:border-red-500/40"><X className="w-8 h-8" /></button>
+                            <button onClick={async () => {
+                                if (window.confirm(`Delete class "${c}"? This will permanently modify your database and shift all subsequent class indices to prevent gaps.`)) {
+                                    try {
+                                        await API.labels.deleteClass(projectId, i);
+                                        const newList = await API.labels.getClasses(projectId);
+                                        setClasses(newList || []);
+                                        window.location.reload();
+                                    } catch (e) {
+                                        alert("Failed to delete class");
+                                    }
+                                }
+                            }} className="p-5 hover:bg-red-500/20 text-white hover:text-red-500 rounded-3xl transition-all border border-transparent hover:border-red-500/40"><X className="w-8 h-8" /></button>
                         </div>
                     ))}
                     <button onClick={() => setClasses([...classes, "New Class"])} className="w-full p-6 rounded-[2rem] border-4 border-dashed border-white/10 text-white/60 hover:text-accent hover:border-accent/40 transition-all text-sm font-black uppercase tracking-[0.3em]">+ ATTACH_VIRTUAL_ID</button>

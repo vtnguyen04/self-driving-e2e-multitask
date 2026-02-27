@@ -159,33 +159,38 @@ export const Annotator: React.FC<AnnotatorProps> = ({
         });
         ctx.stroke();
 
-        if (control_points.length === 4) {
-            const [p0, p1, p2, p3] = control_points;
-            ctx.strokeStyle = THEME.handle;
-            ctx.setLineDash([5 / transform.scale, 5 / transform.scale]);
-            ctx.beginPath();
-            ctx.moveTo(p0.x * canvas.width, p0.y * canvas.height); ctx.lineTo(p1.x * canvas.width, p1.y * canvas.height);
-            ctx.moveTo(p3.x * canvas.width, p3.y * canvas.height); ctx.lineTo(p2.x * canvas.width, p2.y * canvas.height);
-            ctx.stroke();
-            ctx.setLineDash([]);
-
-            control_points.forEach((p, i) => {
-                const isAnchor = i === 0 || i === 3;
-                ctx.fillStyle = isAnchor ? THEME.waypoint : THEME.handle;
-                ctx.beginPath();
-                ctx.arc(p.x * canvas.width, p.y * canvas.height, (isAnchor ? 8 : 6) / transform.scale, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 2 / transform.scale;
-                ctx.stroke();
-            });
-        }
-
         waypoints.forEach((p) => {
             ctx.fillStyle = '#fff';
             ctx.beginPath();
             ctx.arc(p.x * canvas.width, p.y * canvas.height, 3 / transform.scale, 0, Math.PI * 2);
             ctx.fill();
+        });
+    }
+
+    if (control_points.length > 0) {
+        ctx.strokeStyle = THEME.handle;
+        ctx.setLineDash([5 / transform.scale, 5 / transform.scale]);
+        ctx.beginPath();
+        if (control_points.length >= 2) {
+            ctx.moveTo(control_points[0].x * canvas.width, control_points[0].y * canvas.height);
+            ctx.lineTo(control_points[1].x * canvas.width, control_points[1].y * canvas.height);
+        }
+        if (control_points.length >= 4) {
+            ctx.moveTo(control_points[3].x * canvas.width, control_points[3].y * canvas.height);
+            ctx.lineTo(control_points[2].x * canvas.width, control_points[2].y * canvas.height);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        control_points.forEach((p, i) => {
+            const isAnchor = i === 0 || i === 3;
+            ctx.fillStyle = isAnchor ? THEME.waypoint : THEME.handle;
+            ctx.beginPath();
+            ctx.arc(p.x * canvas.width, p.y * canvas.height, (isAnchor || control_points.length < 4 ? 8 : 6) / transform.scale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2 / transform.scale;
+            ctx.stroke();
         });
     }
 
@@ -214,7 +219,7 @@ export const Annotator: React.FC<AnnotatorProps> = ({
     }
 
     if (mode === 'waypoint') {
-        if (control_points.length === 4) {
+        if (control_points.length <= 4) {
             const hitIdx = control_points.findIndex(p => Math.hypot(p.x - world.x, p.y - world.y) < 0.025 / transform.scale);
             if (hitIdx !== -1) {
                 setDragInfo({ type: 'ctrl_point', index: hitIdx, startX: e.clientX, startY: e.clientY });
@@ -226,7 +231,17 @@ export const Annotator: React.FC<AnnotatorProps> = ({
             setDragInfo({ type: 'point', index: hitIdx, startX: e.clientX, startY: e.clientY });
             return;
         }
-        if (waypoints.length < 10 && e.button === 0) onUpdate({ waypoints: [...waypoints, world] });
+        if (control_points.length < 4 && e.button === 0) {
+            const nextCtrls = [...control_points, world];
+            if (nextCtrls.length === 4) {
+                const [p0, p1, p2, p3] = nextCtrls;
+                const nextWaypoints: Waypoint[] = [];
+                for (let i = 0; i < 10; i++) nextWaypoints.push(getBezierPoint(p0, p1, p2, p3, i / 9));
+                onUpdate({ control_points: nextCtrls, waypoints: nextWaypoints });
+            } else {
+                onUpdate({ control_points: nextCtrls });
+            }
+        }
     } else {
         if (selectedBBoxIdx !== undefined && selectedBBoxIdx !== null) {
             const b = bboxes[selectedBBoxIdx];

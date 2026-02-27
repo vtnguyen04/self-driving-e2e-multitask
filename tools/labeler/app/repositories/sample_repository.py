@@ -40,8 +40,8 @@ class SampleRepository(BaseRepository):
             params.append(project_id)
 
         if class_id is not None:
-            where_clauses.append("data LIKE ?")
-            params.append(f'%\"category\": {class_id}%')
+            where_clauses.append("EXISTS (SELECT 1 FROM json_each(data, '$.bboxes') WHERE json_extract(value, '$.category') = ?)")
+            params.append(class_id)
 
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)

@@ -155,6 +155,12 @@ def get_label(filename: str, service: LabelService = Depends(get_label_service))
 def save_label(filename: str, update: LabelUpdate, service: LabelService = Depends(get_label_service)):
     return service.update_label(filename, update)
 
+@router.post("/batch/delete")
+def delete_batch(payload: dict, service: LabelService = Depends(get_label_service)):
+    """Delete multiple samples at once (bulk delete)."""
+    filenames = payload.get("filenames", [])
+    return service.delete_batch(filenames)
+
 @router.delete("/{filename}")
 def delete_label(filename: str, service: LabelService = Depends(get_label_service)):
     return service.delete_sample(filename)
@@ -166,8 +172,3 @@ def reset_label(filename: str, service: LabelService = Depends(get_label_service
 @router.post("/{filename}/duplicate")
 def duplicate_label(filename: str, new_filename: str, service: LabelService = Depends(get_label_service)):
     return service.duplicate_sample(filename, new_filename)
-
-@router.delete("/batch")
-def delete_batch(filenames: List[str], service: LabelService = Depends(get_label_service)):
-    """Delete multiple samples at once (bulk delete)."""
-    return service.delete_batch(filenames)

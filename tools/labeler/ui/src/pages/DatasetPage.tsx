@@ -118,6 +118,8 @@ export const DatasetPage: React.FC = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [bulkMode, setBulkMode] = useState(false);
+  const dragState = useRef({ isDragging: false, action: null as 'add' | 'remove' | null });
+
   const LIMIT = 48;
 
   const loadData = useCallback(async (isLoadMore = false) => {
@@ -243,10 +245,10 @@ export const DatasetPage: React.FC = () => {
                             onClick={async () => {
                                 if (!confirm(`Delete ${selectedFiles.size} selected files?`)) return;
                                 try {
-                                    await fetch('/api/v1/labels/batch', {
-                                        method: 'DELETE',
+                                    await fetch('/api/v1/labels/batch/delete', {
+                                        method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify(Array.from(selectedFiles))
+                                        body: JSON.stringify({ filenames: Array.from(selectedFiles) })
                                     });
                                     setSelectedFiles(new Set());
                                     setBulkMode(false);
@@ -273,6 +275,17 @@ export const DatasetPage: React.FC = () => {
                     >
                         {bulkMode ? 'Cancel Selection' : 'Select Multiple'}
                     </button>
+                    {bulkMode && (
+                        <button
+                            onClick={() => {
+                                const allCurrentLocally = new Set(samples.map(s => s.filename));
+                                setSelectedFiles(allCurrentLocally);
+                            }}
+                            className="px-6 py-2 bg-white/10 text-white border-2 border-white/20 hover:border-white/40 font-bold rounded-xl transition-all text-sm uppercase"
+                        >
+                            Select All (View)
+                        </button>
+                    )}
                     <select
                         className="bg-[#1a1a1c] border-2 border-white/30 text-white text-base font-black rounded-xl px-6 py-3 outline-none hover:border-accent transition-colors"
                         value={filterStatus}
@@ -294,23 +307,37 @@ export const DatasetPage: React.FC = () => {
             </div>
 
 
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div
+                className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4"
+                onPointerLeave={() => { dragState.current.isDragging = false; dragState.current.action = null; }}
+                onPointerUp={() => { dragState.current.isDragging = false; dragState.current.action = null; }}
+                style={{ touchAction: bulkMode ? 'none' : 'auto' }}
+            >
                 {samples.map((s) => (
                     <div
                         key={s.filename}
                         onClick={(e) => {
                             if (bulkMode) {
                                 e.stopPropagation();
-                                const newSelected = new Set(selectedFiles);
-                                if (newSelected.has(s.filename)) {
-                                    newSelected.delete(s.filename);
-                                } else {
-                                    newSelected.add(s.filename);
-                                }
-                                setSelectedFiles(newSelected);
                             } else {
                                 navigate(`/annotate/${projectId}?file=${s.filename}`);
                             }
+                        }}
+                        onPointerDown={(e) => {
+                            if (!bulkMode) return;
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                            dragState.current.isDragging = true;
+                            const action = selectedFiles.has(s.filename) ? 'remove' : 'add';
+                            dragState.current.action = action;
+                            const newSelected = new Set(selectedFiles);
+                            if (action === 'add') newSelected.add(s.filename); else newSelected.delete(s.filename);
+                            setSelectedFiles(newSelected);
+                        }}
+                        onPointerEnter={() => {
+                            if (!bulkMode || !dragState.current.isDragging || !dragState.current.action) return;
+                            const newSelected = new Set(selectedFiles);
+                            if (dragState.current.action === 'add') newSelected.add(s.filename); else newSelected.delete(s.filename);
+                            setSelectedFiles(newSelected);
                         }}
                         className={`aspect-square bg-[#0a0a0c] border rounded-2xl overflow-hidden relative group cursor-pointer transition-all shadow-2xl ${
                             bulkMode && selectedFiles.has(s.filename)
