@@ -1,110 +1,129 @@
-
-from neuro_pilot.utils.logger import logger
-
-try:
-    import tensorrt as trt
-except ImportError:
-    trt = None
-    logger.warning("TensorRT not found. TensorRTBackend will strictly fail if used.")
-
+import tensorrt as trt
 import torch
 import numpy as np
-from typing import Union, List, OrderedDict
+from typing import Dict, OrderedDict
 from neuro_pilot.utils.logger import logger
-from .base import BaseBackend
 
-class TensorRTBackend(BaseBackend):
+class TensorRTBackend:
     """
-    High-Performance TensorRT Backend (Zero-Copy).
-    Optimized for Jetson Orin/Agx.
+    TensorRT 10 Backend for NeuroPilot inference with zero-copy execution.
+    Requires tensorrt>=10.0.0
     """
     def __init__(self, weights: str, device: torch.device, fp16: bool = True):
-        super().__init__(weights, device, fp16)
-        self.logger = trt.Logger(trt.Logger.INFO)
-        self.context = None
-        self.engine = None
-        self.bindings = OrderedDict()
-        self.output_names = []
+        self.device = device
+        self.fp16 = fp16
 
-        # Load Engine
+        # Initialize TRT
+        self.trt_logger = trt.Logger(trt.Logger.INFO)
+        trt.init_libnvinfer_plugins(self.trt_logger, "")
+
+        # Load engine
         logger.info(f"Loading TensorRT Engine from {weights}")
-        with open(weights, 'rb') as f, trt.Runtime(self.logger) as runtime:
+        with open(weights, 'rb') as f, trt.Runtime(self.trt_logger) as runtime:
             self.engine = runtime.deserialize_cuda_engine(f.read())
 
         if not self.engine:
-            raise RuntimeError("Failed to load TensorRT engine.")
+            raise RuntimeError(f"Failed to load TensorRT engine from {weights}")
 
         self.context = self.engine.create_execution_context()
-        self.allocate_buffers()
 
-    def allocate_buffers(self):
-        """Pre-allocate bindings for Zero-Copy execution."""
-        self.binding_addrs = []
+        # Tensors
+        self.input_names = []
+        self.output_names = []
+        self.bindings: Dict[str, torch.Tensor] = OrderedDict()
+        self.stream = torch.cuda.Stream(device=device)
 
-        for i in range(self.engine.num_bindings):
-            name = self.engine.get_binding_name(i)
-            dtype = trt.nptype(self.engine.get_binding_dtype(i))
-            shape = tuple(self.engine.get_binding_shape(i))
+        self._allocate_buffers()
 
-            # Handle dynamic shapes (simplified for fixed size optimization)
-            if -1 in shape:
-                 # TODO: robust dynamic shape handling
-                 # For now, assume batch size 1 if dynamic
-                 shape = tuple(x if x != -1 else 1 for x in shape)
+    def _allocate_buffers(self, dynamic_shapes: dict = None):
+        """Allocate GPU memory for TRT IO based on engine names and max shapes."""
+        self.bindings = OrderedDict()
 
-            is_input = self.engine.binding_is_input(i)
+        for i in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(i)
+            # Use provided dynamic shape or max/profile shape
+            if dynamic_shapes and name in dynamic_shapes:
+                shape = dynamic_shapes[name]
+                self.context.set_input_shape(name, shape)
+            else:
+                shape = self.engine.get_tensor_shape(name)
+                # If there are dynamic dimensions (-1), we need to set them
+                # For engine export, we fixed batch=1 and imgsz=320, but just in case:
+                if -1 in shape:
+                    shape = tuple(1 if d == -1 else d for d in shape)
+                if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                    self.context.set_input_shape(name, shape)
 
-            if is_input:
-                self.context.set_binding_shape(i, shape)
+            # Re-query shape after setting context (in case of dynamic shapes)
+            # Actually TRT 10 tensor_shape might be different, but for known inputs:
+            alloc_shape = tuple(max(1, d) for d in shape)
+
+            trt_dtype = self.engine.get_tensor_dtype(name)
+            torch_dtype = self._trt_to_torch_dtype(trt_dtype)
+
+            # Allocate contiguous PyTorch tensor natively on GPU
+            tensor = torch.zeros(alloc_shape, dtype=torch_dtype, device=self.device).contiguous()
+            self.bindings[name] = tensor
+
+            # Keep track of names
+            if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                self.input_names.append(name)
             else:
                 self.output_names.append(name)
 
-            # Allocate torch tensor directly on GPU
-            # This avoids copy overhead!
-            tensor = torch.empty(shape, dtype=self._trt_to_torch_dtype(dtype), device=self.device)
-            self.bindings[name] = tensor
-            self.binding_addrs.append(int(tensor.data_ptr()))
-
-            logger.info(f"Allocated TensorRT buffer: {name} {shape} {dtype}")
-
     def _trt_to_torch_dtype(self, trt_dtype):
-        if trt_dtype == np.float32: return torch.float32
-        if trt_dtype == np.float16: return torch.float16
-        if trt_dtype == np.int32: return torch.int32
-        if trt_dtype == np.int8: return torch.int8
-        return torch.float32
+        return {
+            trt.DataType.FLOAT: torch.float32,
+            trt.DataType.HALF: torch.float16,
+            trt.DataType.INT32: torch.int32,
+            trt.DataType.INT8: torch.int8,
+            trt.DataType.BOOL: torch.bool,
+        }[trt_dtype]
 
-    def forward(self, im: torch.Tensor, **kwargs) -> Union[torch.Tensor, List[torch.Tensor]]:
-        # Fill Input Buffer (Zero-Copy from torch tensor)
-        # We assume 'im' matches the input binding name 'images' or index 0
-        # If the input tensor address changes, we might need to update bindings or copy.
-        # For maximum speed, 'im' should be pre-allocated or we copy into the persistent buffer.
+    def warmup(self, imgsz=(1, 3, 320, 320)):
+        """Warmup execution."""
+        dummy_img = torch.zeros(imgsz, dtype=torch.float16 if self.fp16 else torch.float32, device=self.device)
+        dummy_cmd = torch.zeros((1, 4), dtype=torch.float32, device=self.device)
+        for _ in range(3):
+            self.forward(dummy_img, dummy_cmd if len(self.input_names) > 1 else None)
+        logger.info(f"TensorRT warmup complete. IO Buffers: {self.get_io_info()}")
 
-        # Method A: Copy into pre-allocated buffer (Safe)
-        # self.bindings['images'].copy_(im)
+    def get_io_info(self):
+        return {name: tuple(t.shape) for name, t in self.bindings.items()}
 
-        # Method B: Update pointer (Fastest, but risky if 'im' gets deallocated)
-        # Here we use Method A for safety + speed balance
-        input_name = self.engine.get_binding_name(0) # Assume 0 is input
-        if im.shape != self.bindings[input_name].shape:
-             # Resize handling if needed or error
-             pass
+    def forward(self, x: torch.Tensor, command: torch.Tensor = None, **kwargs):
+        """
+        Execute TRT inference completely on GPU.
+        Returns: Dict of output tensors.
+        """
+        # Ensure contiguous inputs
+        x = x.contiguous()
+        if command is not None:
+            command = command.contiguous()
 
-        self.bindings[input_name].copy_(im)
+        # Update input shapes if dynamic
+        if tuple(x.shape) != tuple(self.bindings[self.input_names[0]].shape):
+            dyn_shapes = {self.input_names[0]: tuple(x.shape)}
+            if command is not None and len(self.input_names) > 1:
+                dyn_shapes[self.input_names[1]] = tuple(command.shape)
+            self._allocate_buffers(dyn_shapes)
 
-        # Execute
-        self.context.execute_v2(self.binding_addrs)
+        # Copy data natively on GPU natively
+        self.bindings[self.input_names[0]].copy_(x)
+        if command is not None and len(self.input_names) > 1:
+            self.bindings[self.input_names[1]].copy_(command)
 
-        # Retrieve Outputs
-        # Outputs are already in self.bindings tensors!
-        outputs = [self.bindings[name] for name in self.output_names]
+        # Set tensor addresses in the context for zero-copy
+        for name, tensor in self.bindings.items():
+            self.context.set_tensor_address(name, tensor.data_ptr())
 
-        return outputs[0] if len(outputs) == 1 else outputs
+        # Execute async with CUDA stream
+        self.context.execute_async_v3(stream_handle=self.stream.cuda_stream)
+        self.stream.synchronize()
 
-    def warmup(self, imgsz=(1, 3, 640, 640)):
-        if self.warmup_done: return
-        logger.info("Warming up TensorRT engine...")
-        im = torch.zeros(imgsz, dtype=torch.float32, device=self.device) # Input type usually FP32 then cast inside
-        if self.fp16: im = im.half()
-        self.forward(im)
-        self.warmup_done = True
+        # Return dict of cloned outputs to preserve computation graph (though TRT breaks it, useful for tracking)
+        # Using clone ensures the next inference doesn't overwrite these buffers before they're used
+        return {name: self.bindings[name].clone() for name in self.output_names}
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)

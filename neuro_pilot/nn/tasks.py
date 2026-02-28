@@ -6,6 +6,165 @@ from copy import deepcopy
 from neuro_pilot.utils.logger import logger
 from neuro_pilot.nn.modules import *
 from neuro_pilot.nn.modules.head import ClassificationHead
+import importlib
+
+
+# Safe mapping of allowed module/class names to objects to avoid eval()
+_SAFE_MAP = {
+    # Basic torch modules
+    "Identity": nn.Identity,
+    "Upsample": nn.Upsample,
+    # Project modules (imported via wildcard above)
+    "Conv": Conv,
+    "Bottleneck": Bottleneck,
+    "C3k2": C3k2,
+    "SPPF": SPPF,
+    "C2f": C2f,
+    "C3": C3,
+    "C3k": C3k,
+    "C2PSA": C2PSA,
+    "TimmBackbone": TimmBackbone,
+    "NeuroPilotBackbone": NeuroPilotBackbone,
+    "SelectFeature": SelectFeature,
+    "Detect": Detect,
+    "Segment": Segment,
+    "HeatmapHead": HeatmapHead,
+    "TrajectoryHead": TrajectoryHead,
+    "ClassificationHead": ClassificationHead,
+    "Concat": Concat,
+    "VLFusion": VLFusion,
+    "LanguagePromptEncoder": LanguagePromptEncoder,
+}
+
+
+# Auto-extend `_SAFE_MAP` with any nn.Module subclasses present in this module's
+# globals (e.g., classes imported via `from neuro_pilot.nn.modules import *`).
+# This makes the mapping resilient to added modules without requiring manual updates.
+for _name, _obj in list(globals().items()):
+    try:
+        if isinstance(_obj, type) and issubclass(_obj, nn.Module):
+            _SAFE_MAP.setdefault(_name, _obj)
+    except Exception:
+        # ignore non-class objects or other issues
+        pass
+
+
+def _resolve_module(m_name):
+    """Resolve module/class by name safely.
+
+    - If `m_name` is already an object, return it.
+    - If `m_name` is in `_SAFE_MAP`, return the mapped object.
+    - If `m_name` is a dotted path like 'torch.nn.Identity', import the module
+      and return the attribute. This avoids using eval().
+    """
+    if not isinstance(m_name, str):
+        return m_name
+    if m_name in _SAFE_MAP:
+        return _SAFE_MAP[m_name]
+    if "." in m_name:
+        module_name, attr = m_name.rsplit(".", 1)
+        if module_name == 'nn':
+            module_name = 'torch.nn'
+        try:
+            mod = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            # Fallback
+            mod = importlib.import_module(f"torch.{module_name}")
+        return getattr(mod, attr)
+    raise ImportError(f"Unknown module name: {m_name}")
+
+
+def _substitute_args(args, nc, nm, nw):
+    if not isinstance(args, list):
+        args = [args]
+    for j, a in enumerate(args):
+        if a == "nc":
+            args[j] = nc
+        elif a == "nm":
+            args[j] = nm
+        elif a == "nw":
+            args[j] = nw
+        elif a == "None":
+            args[j] = None
+        elif a == "True":
+            args[j] = True
+        elif a == "False":
+            args[j] = False
+    return args
+
+
+def _scale_depth(n, gd):
+    return max(round(n * gd), 1) if n > 1 else n
+
+
+def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
+    """Handle module-specific argument/channel logic. Returns (c2, args, n)."""
+    c2 = None
+    # Convolution-like modules
+    if m in {Conv, Bottleneck, C3k2, SPPF, C2f, C3, C3k, C2PSA}:
+        c1, c2 = ch[f], args[0]
+        if c2 != nc:  # if not output
+            c2 = make_divisible(c2 * gw, 8)
+        args = [c1, c2, *args[1:]]
+        if m in {C3k2, C2f, C3, C3k, C2PSA}:
+            args.insert(2, n)  # number of bottlenecks
+            n = 1
+    elif m is nn.Upsample:
+        c2 = ch[f]  # Upsample preserves channel count
+        if len(args) == 2:
+            args = [None, args[0], args[1]]
+    elif m is TimmBackbone:
+        model_name = args[0]
+        if "mobilenetv4" in model_name:
+            if scale == "n":
+                model_name = "mobilenetv4_conv_small.e2400_r224_in1k"
+            elif scale == "s":
+                model_name = "mobilenetv4_conv_medium.e500_r224_in1k"
+            elif scale in ["m", "l", "x"]:
+                model_name = "mobilenetv4_conv_large.e600_r224_in1k"
+            args[0] = model_name
+        c2 = m.get_channels(model_name)
+    elif m is NeuroPilotBackbone:
+        model_name = args[0]
+        c2 = m.get_channels(model_name)
+    elif m is SelectFeature:
+        idx = args[0]
+        backbone_module = layers[f]
+        if hasattr(backbone_module, "output_channels"):
+            c2 = backbone_module.output_channels[idx]
+        else:
+            backbone_ch = ch[f]
+            if isinstance(backbone_ch, dict):
+                c2 = backbone_ch[idx]
+            elif isinstance(backbone_ch, (list, tuple)):
+                c2 = backbone_ch[idx]
+            else:
+                c2 = backbone_ch
+    elif m in {Detect, Segment, HeatmapHead, TrajectoryHead, ClassificationHead}:
+        c2 = ch[f[0]] if isinstance(f, list) else ch[f]
+        ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
+        args.insert(0, ch_in)
+        if m is Segment:
+            if len(args) > 2 and args[2] == "nm":
+                args[2] = d.get("nm")
+            if len(args) > 3 and args[3] == "npr":
+                args[3] = d.get("npr", 256)
+    elif m is Concat:
+        c2 = sum(ch[x] for x in f)
+    elif m is VLFusion:
+        vision_ch = ch[f[0]]
+        lang_ch = ch[f[1]]
+        heads = args[2] if len(args) > 2 else 4
+        args = [vision_ch, lang_ch, heads]
+        c2 = vision_ch
+    elif m is LanguagePromptEncoder:
+        c2 = args[0]
+        c2 = make_divisible(c2 * gw, 8)
+        args[0] = c2
+    else:
+        c2 = ch[f] if isinstance(f, int) else ch[f[0]]
+
+    return c2, args, n
 
 
 def parse_model(d, ch):
@@ -30,103 +189,20 @@ def parse_model(d, ch):
     nc, nm, nw = d["nc"], d.get("nm"), d.get("nw")
 
     layers, save, c2 = [], [], ch  # layers, savelist, ch out
-    for i, (f, n, m_name, args) in enumerate(
-        d["backbone"] + d["head"]
-    ):  # from, number, module, args
-        m = eval(m_name) if isinstance(m_name, str) else m_name
-        if not isinstance(args, list):
-            args = [args]  # ensure args is a list
+    for i, (f, n, m_name, args) in enumerate(d["backbone"] + d["head"]):
+        m = _resolve_module(m_name)
 
-        # Safe parameter substitution
-        for j, a in enumerate(args):
-            if a == "nc":
-                args[j] = nc
-            elif a == "nm":
-                args[j] = nm
-            elif a == "nw":
-                args[j] = nw
-            elif a == "None":
-                args[j] = None
-            elif a == "True":
-                args[j] = True
-            elif a == "False":
-                args[j] = False
+        # Arg substitution and normalization
+        args = _substitute_args(args, nc, nm, nw)
 
-        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
-        if m in {Conv, Bottleneck, C3k2, SPPF, C2f, C3, C3k, C2PSA}:
-            c1, c2 = ch[f], args[0]
-            if c2 != nc:  # if not output
-                c2 = make_divisible(c2 * gw, 8)
-            args = [c1, c2, *args[1:]]
-            if m in {C3k2, C2f, C3, C3k, C2PSA}:
-                args.insert(2, n)  # number of bottlenecks
-                n = 1
-        elif m is nn.Upsample:
-            if len(args) == 2:
-                args = [None, args[0], args[1]]
-        elif m is TimmBackbone:
-            model_name = args[0]
+        # Depth scaling
+        n_ = n
+        n = _scale_depth(n, gd)
 
-            # Dynamic Backbone Selection based on Scale
-            # To meet user expectations (e.g. Small ~10M params), we switch backbone variants.
-            if "mobilenetv4" in model_name:
-                if scale == "n":
-                    model_name = "mobilenetv4_conv_small.e2400_r224_in1k"
-                elif scale == "s":
-                    # Medium backbone -> ~10M params with head
-                    model_name = "mobilenetv4_conv_medium.e500_r224_in1k"
-                elif scale in ["m", "l", "x"]:
-                    # Large backbone -> ~30M+ params
-                    model_name = "mobilenetv4_conv_large.e600_r224_in1k"
+        # Module-specific handling (channels, args, etc.)
+        c2, args, n = _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale)
 
-                args[0] = model_name
-
-            c2 = m.get_channels(model_name)
-        elif m is NeuroPilotBackbone:
-            model_name = args[0]
-            c2 = m.get_channels(model_name)
-        elif m is SelectFeature:
-            idx = args[0]
-            backbone_module = layers[f]
-            if hasattr(backbone_module, "output_channels"):
-                c2 = backbone_module.output_channels[idx]
-            else:
-                backbone_ch = ch[f]
-                if isinstance(backbone_ch, dict):
-                    c2 = backbone_ch[idx]
-                elif isinstance(backbone_ch, (list, tuple)):
-                    c2 = backbone_ch[idx]
-                else:
-                    c2 = backbone_ch
-        elif m in {Detect, Segment, HeatmapHead, TrajectoryHead, ClassificationHead}:
-            c2 = ch[f[0]] if isinstance(f, list) else ch[f]
-            ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
-            args.insert(0, ch_in)
-
-            if m is Segment:
-                if len(args) > 2 and args[2] == "nm":
-                    args[2] = nm
-                if len(args) > 3 and args[3] == "npr":
-                    args[3] = d.get("npr", 256)
-        elif m is Concat:
-            c2 = sum(ch[x] for x in f)
-        elif m is VLFusion:
-            # args: [c1_hint, c2_hint, heads] in yaml.
-            # Auto-derive from inputs: f=[vision_idx, lang_idx]
-            vision_ch = ch[f[0]]
-            lang_ch = ch[f[1]]
-            heads = args[2] if len(args) > 2 else 4
-            args = [vision_ch, lang_ch, heads]
-            c2 = vision_ch
-        elif m is LanguagePromptEncoder:
-            # args: [embed_dim, num_prompts, mode]
-            # Scale embed_dim (args[0])
-            c2 = args[0]
-            c2 = make_divisible(c2 * gw, 8)
-            args[0] = c2
-        else:
-            c2 = ch[f] if isinstance(f, int) else ch[f[0]]
-
+        # Instantiate module(s)
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)
         t = str(m)[8:-2].replace("__main__.", "")
         np = sum(x.numel() for x in m_.parameters())

@@ -9,12 +9,15 @@ from neuro_pilot.utils.logger import logger
 class Exporter:
     """
     Unified Exporter for Neuro Pilot.
-    Supports ONNX (standard) and allows hook for TensorRT/TFLite.
+    Supports ONNX (standard) and TensorRT engine (via trtexec).
     """
     def __init__(self, cfg, model, device):
         self.cfg = cfg
         self.model = model
-        if hasattr(model, 'model'):
+        # Unwrap NeuroPilot wrapper to get DetectionModel, but don't
+        # unwrap DetectionModel itself (its self.model is nn.Sequential)
+        from neuro_pilot.engine.model import NeuroPilot
+        if isinstance(model, NeuroPilot) and hasattr(model, 'model'):
             self.model = model.model
         self.device = device
         from .callbacks import CallbackList
@@ -35,11 +38,12 @@ class Exporter:
         return path
 
     def export_onnx(self, imgsz=None, simplify=True, opset=17, end2end=False, **kwargs):
-        """Export to ONNX."""
-        imgsz = imgsz or getattr(self.cfg, 'imgsz', (640, 640))
+        """Export to ONNX with proper multi-head output handling."""
+        imgsz = imgsz or getattr(self.cfg.data, 'image_size', 320) if hasattr(self.cfg, 'data') else 320
         if isinstance(imgsz, int): imgsz = (imgsz, imgsz)
 
-        output_path = kwargs.get('file', f"neuro_pilot_model.onnx")
+        output_path = kwargs.get('file', "neuro_pilot_model.onnx")
+        skip_heatmap = kwargs.get('skip_heatmap', False)
 
         # Prepare Dummy Input
         im = torch.zeros(1, 3, *imgsz).to(self.device).float()
@@ -47,78 +51,67 @@ class Exporter:
 
         self.model.eval()
 
-        # Wrap model for export (Flatten dict to tuple)
+        # Wrap model for export (dict → ordered tuple for ONNX)
         class ExportAdapter(nn.Module):
-            def __init__(self, model, end2end=False, device='cpu'):
+            """Flattens NeuroPilot dict outputs into ordered tuple for ONNX export."""
+            def __init__(self, model, skip_heatmap=False):
                 super().__init__()
                 self.model = model
-                self.end2end = end2end
-                self.device = device
-                self.topk = 100
-                self.iou_thres = 0.45
-                self.conf_thres = 0.25
+                self.skip_heatmap = skip_heatmap
 
             def forward(self, x, cmd):
-                out = self.model(x, cmd=cmd)
-                # Output order: bboxes, scores, classes, trajectory, heatmap
-                # Assumes 'detect' head produces (bboxes, scores, classes) or similar
-                # NeuroPilot DetectionHead returns: [bboxes, scores, classes] (list) usually
-                # But let's check what 'out' actually is.
-                # In DetectionModel.forward, it returns `outputs` dict if heads return dicts,
-                # OR it returns `x` (list of heads) if heads return tensors.
+                # Pass cmd positionally — DetectionModel.forward extracts args[1] as cmd
+                out = self.model(x, cmd)
 
-                # We need to standardize this.
-                # If it's a dict (from model.forward return outputs if outputs else x)
-
-                # Check for Results object
-                # Attempt to access 'raw' outputs if available, or reconstruct
-                if hasattr(out, 'boxes') or type(out).__name__ == 'Results':
-                     # It's a Results object!
-                     # We need to extract the raw tensors.
-                     # But Results usually contains post-processed data.
-                     # If we want E2E, we might want raw data.
-                     # However, NeuroPilot.forward() calls model.forward().
-                     # DetectionModel.forward() returns dict/list/tuple depending on 'augment' or 'profile'.
-                     # If it returns Results, that means NeuroPilot.forward is doing something or model is wrapped.
-
-                     # Let's assume out is just the raw output if we called self.model() where self.model is the Inner Model.
-                     # But wait, Exporter initializes with `self.model` which IS `NeuroPilot` instance in `main.py`!
-                     # `exporter = Exporter(..., model, ...)` where model is NeuroPilot instance.
-                     # FAST FIX: Access `model.model` inside Exporter if it's a NeuroPilot instance.
-                     pass
+                B, _, H_in, W_in = x.shape
+                device = x.device
 
                 if isinstance(out, dict):
-                    # Try to extract keys
-                    # Detect head usually has: 'pred_bboxes', 'pred_scores', 'pred_labels' ?
-                    # OR if it is standard YOLO head it might return list.
+                    # Detection: 'bboxes' = [B, 4+nc, N] (decoded xywh + sigmoid scores)
+                    bboxes = out.get('bboxes')
+                    if bboxes is None:
+                        bboxes = torch.zeros(B, 18, 0, device=device)
 
-                    # Inspect input shape to determine fallback H, W
-                    B, _, H_in, W_in = x.shape
-                    H_hm, W_hm = H_in // 8, W_in // 8
+                    # Trajectory: 'waypoints' = [B, T, 2] normalized [-1, 1]
+                    waypoints = out.get('waypoints')
+                    if waypoints is None:
+                        waypoints = torch.zeros(B, 10, 2, device=device)
 
-                    # Let's inspect typical keys or rely on known keys
-                    bboxes = out.get('bboxes') if out.get('bboxes') is not None else torch.zeros(B, 0, 4).to(x.device)
-                    scores = out.get('scores') if out.get('scores') is not None else torch.zeros(B, 0).to(x.device)
-                    labels = out.get('labels') if out.get('labels') is not None else torch.zeros(B, 0).to(x.device) # or classes
+                    # Heatmap: 'heatmap' = [B, 1, H, W]
+                    if not self.skip_heatmap:
+                        hm = out.get('heatmap')
+                        if isinstance(hm, dict):
+                            hm = hm.get('heatmap')
+                        if hm is None:
+                            hm = torch.zeros(B, 1, H_in, W_in, device=device)
+                    else:
+                        hm = torch.zeros(B, 1, 1, 1, device=device)
 
-                    # If 'pred_bboxes' style (RT-DETR / YOLO adapters)
-                    if 'pred_bboxes' in out: bboxes = out['pred_bboxes']
-                    if 'pred_scores' in out: scores = out['pred_scores']
-                    if 'pred_labels' in out: labels = out['pred_labels']
+                    # Classification (command prediction): 'classes' = [B, nc]
+                    classes = out.get('classes')
+                    if classes is None:
+                        classes = torch.zeros(B, 4, device=device)
 
-                    traj = out.get('trajectory') if out.get('trajectory') is not None else torch.zeros(B, 0, 2).to(x.device)
-                    hm = out.get('heatmap') if out.get('heatmap') is not None else torch.zeros(B, 1, H_hm, W_hm).to(x.device)
+                    return bboxes, waypoints, hm, classes
 
-                    # Return tuple
-                    return bboxes, scores, labels, traj, hm
-
-                # If list/tuple, pass through?
+                # Fallback for non-dict outputs
                 return out
 
-        model_wrapper = ExportAdapter(self.model, end2end=end2end, device=self.device).to(self.device)
+        model_wrapper = ExportAdapter(self.model, skip_heatmap=skip_heatmap).to(self.device)
         model_wrapper.eval()
 
+        # Define output names and dynamic axes
+        output_names = ['bboxes', 'trajectory', 'heatmap', 'classes']
+        dynamic_axes = None
+        if kwargs.get('dynamic', False):
+            dynamic_axes = {
+                'image': {0: 'batch'}, 'command': {0: 'batch'},
+                'bboxes': {0: 'batch'}, 'trajectory': {0: 'batch'},
+                'heatmap': {0: 'batch'}, 'classes': {0: 'batch'},
+            }
+
         # Export
+        logger.info(f"Exporting ONNX: imgsz={imgsz}, opset={opset}, skip_heatmap={skip_heatmap}")
         torch.onnx.export(
             model_wrapper,
             (im, cmd),
@@ -127,10 +120,8 @@ class Exporter:
             opset_version=opset,
             do_constant_folding=True,
             input_names=['image', 'command'],
-            output_names=['bboxes', 'scores', 'labels', 'trajectory', 'heatmap'],
-            dynamic_axes={'image': {0: 'batch'}, 'command': {0: 'batch'},
-                          'bboxes': {0: 'batch'}, 'scores': {0: 'batch'}, 'labels': {0: 'batch'},
-                          'trajectory': {0: 'batch'}, 'heatmap': {0: 'batch'}} if kwargs.get('dynamic', False) else None
+            output_names=output_names,
+            dynamic_axes=dynamic_axes,
         )
 
         # Simplify
@@ -141,27 +132,24 @@ class Exporter:
                 model_simp, check = onnx_simplify(model_onnx)
                 if check:
                     onnx.save(model_simp, output_path)
-                    logger.info("ONNX Simplication success.")
+                    logger.info("ONNX simplification success.")
             except ImportError:
                 logger.warning("onnx-simplifier not found. Skipping simplification.")
 
-        # Metadata
+        # Embed Metadata
         try:
             model_onnx = onnx.load(output_path)
-            meta = model_onnx.metadata_props.add()
-            meta.key = 'names'
-            meta.value = str(getattr(self.model, 'names', {}))
-
-            meta = model_onnx.metadata_props.add()
-            meta.key = 'stride'
-            meta.value = str(int(max(getattr(self.model, 'stride', [32]))))
-
-            meta = model_onnx.metadata_props.add()
-            meta.key = 'imgsz'
-            meta.value = str(imgsz)
-
+            for key, value in {
+                'names': str(getattr(self.model, 'names', {})),
+                'stride': str(int(max(getattr(self.model, 'stride', [32])))),
+                'imgsz': str(imgsz),
+                'skip_heatmap': str(skip_heatmap),
+            }.items():
+                meta = model_onnx.metadata_props.add()
+                meta.key = key
+                meta.value = value
             onnx.save(model_onnx, output_path)
-            logger.info(f"Export complete: {output_path} (Metadata added)")
+            logger.info(f"Export complete: {output_path} (metadata embedded)")
         except Exception as e:
             logger.warning(f"Metadata embedding failed: {e}")
 
@@ -170,39 +158,39 @@ class Exporter:
     def export_engine(self, imgsz=None, half=True, dynamic=False, workspace=4, **kwargs):
         """
         Export to TensorRT engine.
-        Converts PyTorch -> ONNX -> TensorRT Engine.
+        Converts PyTorch → ONNX → TensorRT Engine via trtexec.
         """
-        # Export to ONNX first
         onnx_path = self.export_onnx(imgsz=imgsz, simplify=True, dynamic=dynamic, **kwargs)
         engine_path = onnx_path.replace('.onnx', '.engine')
 
         logger.info(f"Converting {onnx_path} to TensorRT engine...")
 
         try:
-             import tensorrt as trt
-             # Attempt direct conversion if tensorrt python API is available
-             # For brevity and robustness in CLI environments, we can also use trtexec
-             import subprocess
+            import tensorrt as trt
+            import subprocess
 
-             cmd = [
-                 'trtexec',
-                 f'--onnx={onnx_path}',
-                 f'--saveEngine={engine_path}',
-                 f'--workspace={workspace * 1024}',
-                 '--fp16' if half else ''
-             ]
-             if dynamic:
-                 # dynamic shapes for NeuroPilot
-                 cmd.append('--minShapes=image:1x3x640x640,command:1x4')
-                 cmd.append('--optShapes=image:4x3x640x640,command:4x4')
-                 cmd.append('--maxShapes=image:8x3x640x640,command:8x4')
+            trt_imgsz = imgsz or 320
+            if isinstance(trt_imgsz, tuple): trt_imgsz = trt_imgsz[0]
 
-             logger.info(f"Running: {' '.join(cmd)}")
-             subprocess.run([c for c in cmd if c], check=True, capture_output=True)
-             logger.info(f"TensorRT export success: {engine_path}")
-             return engine_path
+            cmd = [
+                'trtexec',
+                f'--onnx={onnx_path}',
+                f'--saveEngine={engine_path}',
+                f'--workspace={workspace * 1024}',
+            ]
+            if half:
+                cmd.append('--fp16')
+            if dynamic:
+                cmd.append(f'--minShapes=image:1x3x{trt_imgsz}x{trt_imgsz},command:1x4')
+                cmd.append(f'--optShapes=image:4x3x{trt_imgsz}x{trt_imgsz},command:4x4')
+                cmd.append(f'--maxShapes=image:8x3x{trt_imgsz}x{trt_imgsz},command:8x4')
+
+            logger.info(f"Running: {' '.join(cmd)}")
+            subprocess.run(cmd, check=True, capture_output=True)
+            logger.info(f"TensorRT export success: {engine_path}")
+            return engine_path
 
         except (ImportError, Exception) as e:
-             logger.error(f"TensorRT export failed: {e}")
-             logger.warning("Make sure 'tensorrt' is installed and 'trtexec' is in your PATH.")
-             return None
+            logger.error(f"TensorRT export failed: {e}")
+            logger.warning("Make sure 'tensorrt' is installed and 'trtexec' is in your PATH.")
+            return None

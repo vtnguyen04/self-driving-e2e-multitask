@@ -2,13 +2,13 @@ from neuro_pilot import NeuroPilot
 
 
 def run_real_training():
-    model = NeuroPilot("neuro_pilot/cfg/models/yolo_style.yaml", scale="s")
+    model = NeuroPilot("neuro_pilot/cfg/models/neuralPilot_yolo11.yaml", scale="s")
 
     # Training configuration overrides
     overrides = {
         "data": {
             "dataset_yaml": "v1/data.yaml",
-            "batch_size": 16,
+            "batch_size": 32,
             "image_size": 320,
             "augment": {
                 "rotate_deg": 10.0,

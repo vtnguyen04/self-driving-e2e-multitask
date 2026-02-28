@@ -26,6 +26,7 @@
 !/tools/labeler/data/
 /tools/labeler/data/*
 !/tools/labeler/data/minio_data/
+*.code-workspace
 
 
 # --- Standard Ignores ---

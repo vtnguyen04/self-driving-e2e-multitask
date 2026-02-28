@@ -1,207 +1,297 @@
+#!/usr/bin/env python3
+"""
+NeuroPilot Jetson Inference — TensorRT Optimized.
+
+All computation on GPU: preprocessing, inference, NMS, postprocessing.
+Supports both .engine (TensorRT) and .onnx (ORT-TRT) inputs.
+
+Usage:
+    python examples/jetson_inference_trt.py \
+        --engine model.engine \
+        --source video.mp4 \
+        --command 0 \
+        --imgsz 320
+"""
 
 import cv2
 import numpy as np
-import onnxruntime as ort
+import torch
 import argparse
 import time
 import sys
 from pathlib import Path
 
-# Add root to path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-def letterbox(im, new_shape=(320, 320), color=(114, 114, 114), auto=False, scaleFill=False, scaleup=True, stride=32):
-    shape = im.shape[:2]  # current shape [height, width]
-    if isinstance(new_shape, int):
-        new_shape = (new_shape, new_shape)
+from neuro_pilot.utils.logger import logger
 
-    # Scale ratio (new / old)
-    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
-    if not scaleup:  # only scale down, do not scale up (for better val mAP)
-        r = min(r, 1.0)
+# ─── GPU Preprocessing ──────────────────────────────────────────────────────
 
-    # Compute padding
-    ratio = r, r  # width, height ratios
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
-    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
-    if auto:  # minimum rectangle
-        dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
-    elif scaleFill:  # stretch
-        dw, dh = 0.0, 0.0
-        new_unpad = (new_shape[1], new_shape[0])
-        ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]
+def preprocess_gpu(frame: np.ndarray, imgsz: int, device: torch.device) -> tuple:
+    """
+    Letterbox + normalize on GPU. Returns (tensor, ratio, (dw, dh)).
+    - frame: BGR numpy array (H, W, 3)
+    - Returns: float32 tensor [1, 3, imgsz, imgsz] on device
+    """
+    h0, w0 = frame.shape[:2]
+    r = min(imgsz / h0, imgsz / w0)
+    new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+    dw, dh = (imgsz - new_w) / 2, (imgsz - new_h) / 2
 
-    dw /= 2  # divide padding into 2 sides
-    dh /= 2
+    # Resize on CPU (OpenCV is faster than torch for this)
+    if (new_w, new_h) != (w0, h0):
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+    else:
+        resized = frame
 
-    if shape[::-1] != new_unpad:  # resize
-        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-
+    # Pad
     top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
     left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-    im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
-    return im, ratio, (dw, dh)
+    padded = cv2.copyMakeBorder(resized, top, bottom, left, right,
+                                cv2.BORDER_CONSTANT, value=(114, 114, 114))
+
+    # Transfer to GPU + normalize (all on GPU)
+    img_t = torch.from_numpy(padded).to(device, non_blocking=True)  # [H, W, 3] uint8
+    img_t = img_t.permute(2, 0, 1).flip(0)     # HWC→CHW, BGR→RGB
+    img_t = img_t.float().div_(255.0)            # normalize [0,1]
+    img_t = img_t.unsqueeze(0).contiguous()      # add batch dim
+
+    return img_t, r, (dw, dh)
+
+
+# ─── GPU NMS ─────────────────────────────────────────────────────────────────
+
+def nms_gpu(pred: torch.Tensor, conf_thres: float = 0.25, iou_thres: float = 0.45,
+            max_det: int = 300, nc: int = 14) -> list:
+    """
+    GPU-native NMS for YOLO-style detection output.
+    pred: [B, 4+nc, N] raw detection output (xywh + class scores).
+    Returns: list of [N_det, 6] tensors (x1,y1,x2,y2,conf,cls) per batch.
+    """
+    from neuro_pilot.utils.nms import non_max_suppression
+    # Check shape: NMS expects [B, 4+nc, N]
+    # In ExportAdapter, we flatten it to [B, 18, N] which matches this format.
+    return non_max_suppression(pred, conf_thres=conf_thres, iou_thres=iou_thres,
+                               max_det=max_det, nc=nc)
+
+
+# ─── Scale Coordinates Back ─────────────────────────────────────────────────
+
+def scale_boxes(boxes: torch.Tensor, ratio: float, dw: float, dh: float) -> torch.Tensor:
+    """Scale xyxy boxes from letterboxed space back to original image coordinates."""
+    boxes[:, [0, 2]] -= dw
+    boxes[:, [1, 3]] -= dh
+    boxes[:, :4] /= ratio
+    return boxes
+
+
+def scale_trajectory(traj: np.ndarray, imgsz: int, ratio: float,
+                     dw: float, dh: float) -> np.ndarray:
+    """Denormalize trajectory from [-1,1] to original image pixels."""
+    # [-1, 1] → [0, imgsz]
+    pts = (traj + 1) / 2 * imgsz
+    # Remove letterbox padding
+    pts[:, 0] -= dw
+    pts[:, 1] -= dh
+    # Scale to original
+    pts /= ratio
+    return pts.astype(np.int32)
+
+
+# ─── Drawing ─────────────────────────────────────────────────────────────────
+
+CMD_NAMES = {0: "Follow", 1: "Left", 2: "Right", 3: "Straight"}
+COLORS = [(255, 56, 56), (56, 56, 255), (56, 255, 56), (255, 157, 56),
+          (255, 56, 255), (56, 255, 255), (200, 200, 56), (56, 200, 200)]
+
+
+def draw_results(frame, detections, traj_pts, cmd_idx, dt_ms, names=None):
+    """Draw all results on frame."""
+    annotated = frame.copy()
+    h, w = annotated.shape[:2]
+
+    # Draw trajectory
+    if traj_pts is not None and len(traj_pts) > 1:
+        for i in range(len(traj_pts) - 1):
+            p1 = tuple(np.clip(traj_pts[i], 0, [w-1, h-1]))
+            p2 = tuple(np.clip(traj_pts[i+1], 0, [w-1, h-1]))
+            cv2.line(annotated, p1, p2, (0, 255, 0), 3, cv2.LINE_AA)
+        for p in traj_pts:
+            p = tuple(np.clip(p, 0, [w-1, h-1]))
+            cv2.circle(annotated, p, 4, (0, 200, 0), -1)
+
+    # Draw detections
+    if detections is not None and len(detections) > 0:
+        for det in detections:
+            x1, y1, x2, y2, conf, cls_id = det
+            cls_id = int(cls_id)
+            color = COLORS[cls_id % len(COLORS)]
+            label = names.get(cls_id, str(cls_id)) if names else str(cls_id)
+            cv2.rectangle(annotated, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+            cv2.putText(annotated, f"{label} {conf:.2f}",
+                       (int(x1), max(int(y1) - 5, 0)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+    # HUD
+    cmd_name = CMD_NAMES.get(cmd_idx, str(cmd_idx))
+    cv2.putText(annotated, f"{dt_ms:.1f}ms | CMD: {cmd_name}",
+               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+    return annotated
+
+
+# ─── Main Inference Loop ─────────────────────────────────────────────────────
 
 def run_inference(args):
-    # Load Engine or ONNX
-    # Load Engine or ONNX
-    is_engine = args.engine.endswith('.engine') or args.engine.endswith('.plan')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    imgsz = args.imgsz
+
+    # ── Load Backend ──
+    is_engine = args.engine.endswith(('.engine', '.plan'))
 
     if is_engine:
-        try:
-            import tensorrt as trt
-            import pycuda.driver as cuda
-            import pycuda.autoinit
-        except ImportError:
-            print("Error: tensorrt and pycuda are required for .engine inference. Install them or use ONNX.")
-            sys.exit(1)
-
-        logger = trt.Logger(trt.Logger.WARNING)
-        with open(args.engine, "rb") as f, trt.Runtime(logger) as runtime:
-            engine = runtime.deserialize_cuda_engine(f.read())
-
-        context = engine.create_execution_context()
-        print(f"Loaded TensorRT engine: {args.engine}")
-
+        from neuro_pilot.engine.backend.tensorrt import TensorRTBackend
+        backend = TensorRTBackend(args.engine, device, fp16=args.half)
+        backend.warmup(imgsz=(1, 3, imgsz, imgsz))
+        io_info = backend.get_io_info()
+        logger.info(f"TRT I/O: {io_info}")
     else:
-        # ONNX
-        # Assuming end2end ONNX
-        providers = ['TensorRTExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+        # ONNX with TensorRT Execution Provider
+        import onnxruntime as ort
+        providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
         session = ort.InferenceSession(args.engine, providers=providers)
-        print(f"Loaded ONNX model: {args.engine}")
+        input_names = [inp.name for inp in session.get_inputs()]
+        logger.info(f"ONNX inputs: {input_names}")
 
-    # Video Setup
-    v_cap = cv2.VideoCapture(args.source)
+        # Warmup
+        dummy_img = np.zeros((1, 3, imgsz, imgsz), dtype=np.float32)
+        dummy_cmd = np.zeros((1, 4), dtype=np.float32)
+        feed = {input_names[0]: dummy_img}
+        if len(input_names) > 1:
+            feed[input_names[1]] = dummy_cmd
+        session.run(None, feed)
+        logger.info("ONNX warmup done.")
 
-    use_mock = False
-    if not v_cap.isOpened():
-        print(f"Warning: Could not open video {args.source}. Retrying or switching to mock input.")
-        # Try one more time? Or just mock.
-        if args.source == 'mock':
-             use_mock = True
-             w, h, fps = 640, 480, 30.0
-             print("Using MOCK input.")
-        else:
-             print("Video open failed. Using MOCK input for verification.")
-             use_mock = True
-             w, h, fps = 640, 480, 30.0
+    # ── Video Setup ──
+    use_mock = (args.source == 'mock')
+    if use_mock:
+        w, h, fps = 640, 480, 30.0
+        logger.info("Using MOCK input.")
     else:
+        v_cap = cv2.VideoCapture(args.source)
+        if not v_cap.isOpened():
+            logger.error(f"Failed to open video: {args.source}")
+            sys.exit(1)
         w = int(v_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(v_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = v_cap.get(cv2.CAP_PROP_FPS)
+        fps = v_cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    save_path = Path(args.source).stem + f"_trt_cmd_{args.command}_out.avi"
+    save_path = str(Path(args.source).stem) + f"_trt_cmd{args.command}_out.avi"
     writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
 
-    # buffers for TRT
-    if is_engine:
-        # Allocate buffers
-        inputs, outputs, bindings, stream = [], [], [], cuda.Stream()
-        for binding in engine:
-            size = trt.volume(engine.get_binding_shape(binding)) * engine.max_batch_size # Assuming BS=1
-            dtype = trt.nptype(engine.get_binding_dtype(binding))
-            # Host and Device buffers
-            host_mem = cuda.pagelocked_empty(size, dtype)
-            device_mem = cuda.mem_alloc(host_mem.nbytes)
-            bindings.append(int(device_mem))
-            if engine.binding_is_input(binding):
-                inputs.append({'host': host_mem, 'device': device_mem})
-            else:
-                outputs.append({'host': host_mem, 'device': device_mem})
+    # ── Command Vector ──
+    cmd_vec = torch.zeros(1, 4, dtype=torch.float32, device=device)
+    cmd_vec[0, args.command] = 1.0
 
-    print("Starting Inference...")
-    cnt = 0
-    t_sum = 0
+    # ── Inference Loop ──
+    cnt, t_sum = 0, 0.0
+    max_frames = args.max_frames
 
-    max_frames = 100 if use_mock else 1000000
-
-    while (v_cap.isOpened() or use_mock) and cnt < max_frames:
+    while cnt < max_frames:
         if use_mock:
-             frame = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
-             ret = True
-             time.sleep(0.01) # Simulate real-time
+            frame = np.random.randint(0, 255, (h, w, 3), dtype=np.uint8)
         else:
-             ret, frame = v_cap.read()
+            ret, frame = v_cap.read()
+            if not ret:
+                break
 
-        if not ret: break
+        # ── GPU Preprocess ──
+        t0 = time.perf_counter()
+        img_t, ratio, (dw, dh) = preprocess_gpu(frame, imgsz, device)
 
-        # Pre-process
-        img, ratio, (dw, dh) = letterbox(frame, (320, 320), stride=32, auto=False)
-        img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
-        img = np.ascontiguousarray(img)
-        img = img.astype(np.float32) / 255.0
-        img = img[None]
+        if args.half:
+            img_t = img_t.half()
 
-        # Command
-        cmd_idx = args.command
-        cmd_vec = np.zeros((1, 4), dtype=np.float32)
-        cmd_vec[0, cmd_idx] = 1.0
-
-        t0 = time.time()
-
-        # Inference
+        # ── Inference ──
         if is_engine:
-            # Copy inputs
-            np.copyto(inputs[0]['host'], img.ravel()) # Image
-            np.copyto(inputs[1]['host'], cmd_vec.ravel()) # Command
+            outputs = backend.forward(img_t, command=cmd_vec)
 
-            # Transfer input data to the GPU.
-            [cuda.memcpy_htod_async(inp['device'], inp['host'], stream) for inp in inputs]
-            # Run inference.
-            context.execute_async_v2(bindings=bindings, stream_handle=stream.handle)
-            # Transfer predictions back from the GPU.
-            [cuda.memcpy_dtoh_async(out['host'], out['device'], stream) for out in outputs]
-            # Synchronize the stream
-            stream.synchronize()
-
-            # Unpack outputs
-            # Simplified output handling for demo/verification
-            pass
-
+            # Parse multi-head outputs by name form exporter
+            det_raw = outputs.get('bboxes')
+            traj_raw = outputs.get('trajectory')
         else:
             # ONNX Runtime
-            input_name = session.get_inputs()[0].name
-            cmd_name = session.get_inputs()[1].name
-            ort_outs = session.run(None, {input_name: img, cmd_name: cmd_vec})
+            img_np = img_t.cpu().numpy() if img_t.is_cuda else img_t.numpy()
+            cmd_np = cmd_vec.cpu().numpy()
+            feed = {input_names[0]: img_np}
+            if len(input_names) > 1:
+                feed[input_names[1]] = cmd_np
+            ort_outs = session.run(None, feed)
 
-            # Unpack (End2End format)
-            # final_boxes, final_scores, final_classes, traj, hm
-            if len(ort_outs) >= 3:
-                pred_boxes = ort_outs[0] # [1, N, 4]
-                pred_scores = ort_outs[1] # [1, N]
-                pred_classes = ort_outs[2] # [1, N]
-                traj = ort_outs[3]
-                hm = ort_outs[4]
-            else:
-                 # Standard format fallback
-                 pass
+            det_raw = torch.from_numpy(ort_outs[0]).to(device) if len(ort_outs) > 0 else None
+            traj_raw = torch.from_numpy(ort_outs[1]).to(device) if len(ort_outs) > 1 else None
 
-        t1 = time.time()
-        dt = t1 - t0
-        t_sum += dt
+        # ── GPU NMS (Detection) ──
+        dets_scaled = None
+        if det_raw is not None and det_raw.numel() > 0:
+            nms_out = nms_gpu(det_raw, conf_thres=args.conf, iou_thres=args.iou, nc=args.nc)
+
+            if len(nms_out) > 0 and nms_out[0].shape[0] > 0:
+                dets = nms_out[0]  # [N, 6] (x1,y1,x2,y2,conf,cls) on GPU
+                dets[:, :4] = scale_boxes(dets[:, :4].clone(), ratio, dw, dh)
+                dets_scaled = dets.cpu().numpy()
+
+        # ── Trajectory ──
+        traj_pts = None
+        if traj_raw is not None and traj_raw.numel() > 0:
+            traj_np = traj_raw[0].cpu().numpy()  # [T, 2]
+            traj_pts = scale_trajectory(traj_np, imgsz, ratio, dw, dh)
+
+        t1 = time.perf_counter()
+        dt_ms = (t1 - t0) * 1000
+        t_sum += dt_ms
         cnt += 1
 
-        # Visualization (Simplified)
-        # ... logic to draw based on pred_boxes ...
-        # (Omitted reuse of draw logic for brevity, user mainly wants speed check + structure)
+        # ── Draw ──
+        annotated = draw_results(frame, dets_scaled, traj_pts, args.command, dt_ms)
+        writer.write(annotated)
 
-        if cnt % 100 == 0:
-            print(f"Processed {cnt} frames ({dt*1000:.1f}ms per frame)")
+        if args.show:
+            cv2.imshow("NeuroPilot TRT", annotated)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
 
-    v_cap.release()
+        if cnt % 10 == 0 or cnt <= 10:
+            avg_ms = t_sum / cnt
+            logger.info(f"Frame {cnt}: {dt_ms:.1f}ms (avg {avg_ms:.1f}ms, {1000/avg_ms:.0f} FPS)")
+
+    # ── Cleanup ──
+    if not use_mock:
+        v_cap.release()
     writer.release()
+    if args.show:
+        cv2.destroyAllWindows()
+
     if cnt > 0:
-        print(f"Average FPS: {cnt/t_sum:.2f}")
-    else:
-        print("No frames processed.")
+        avg_ms = t_sum / cnt
+        logger.info(f"Done! {cnt} frames, avg {avg_ms:.1f}ms ({1000/avg_ms:.0f} FPS). Saved: {save_path}")
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--engine', type=str, required=True, help='Path to .engine or .onnx file')
-    parser.add_argument('--source', type=str, required=True, help='Path to video file')
-    parser.add_argument('--command', type=int, default=0, help='Command index')
+    parser = argparse.ArgumentParser(description="NeuroPilot TensorRT Inference (GPU-optimized)")
+    parser.add_argument('--engine', type=str, required=True, help='Path to .engine or .onnx')
+    parser.add_argument('--source', type=str, required=True, help='Video path or "mock"')
+    parser.add_argument('--command', type=int, default=0, choices=[0, 1, 2, 3],
+                       help='Nav command: 0=Follow, 1=Left, 2=Right, 3=Straight')
+    parser.add_argument('--imgsz', type=int, default=320, help='Input resolution')
+    parser.add_argument('--conf', type=float, default=0.25, help='Confidence threshold')
+    parser.add_argument('--iou', type=float, default=0.45, help='NMS IoU threshold')
+    parser.add_argument('--nc', type=int, default=14, help='Number of classes')
+    parser.add_argument('--half', action='store_true', help='FP16 inference')
+    parser.add_argument('--show', action='store_true', help='Show live preview')
+    parser.add_argument('--max-frames', type=int, default=999999, help='Max frames to process')
     args = parser.parse_args()
 
     run_inference(args)
