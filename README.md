@@ -64,7 +64,6 @@ uv run pytest tests/engine/
 
 NeuroPilot includes an integrated labeling tool with S3-compatible storage (MinIO).
 
-```bash
 # Start MinIO and the Labeler app
 uv run python tools/labeler/run.py
 ```
