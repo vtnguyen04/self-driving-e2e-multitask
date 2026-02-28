@@ -1,0 +1,55 @@
+# YOLO-style Model Configuration
+# Ultralytics-style scaling
+scales:
+  # [depth, width, max_channels]
+  n: [0.33, 0.25, 1024]
+  s: [0.33, 0.50, 1024]
+  m: [0.67, 0.75, 768]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.25, 512]
+
+nc: 14
+nm: 4
+nw: 10
+
+# Backbone: Definable as a list or a single Timm module
+# MobilenetV4-Small Features: P1/2:32, P2/4:32, P3/8:64, P4/16:96, P5/32:960
+backbone:
+  - [-1, 1, TimmBackbone, ['mobilenetv4_conv_small.e2400_r224_in1k', True, True]] # 0
+
+# Head (Neck + MT Heads)
+head:
+  # Feature Selection
+  - [0, 1, SelectFeature, [4]]   # 1 (P5 - 960ch - stride 32)
+  - [0, 1, SelectFeature, [3]]   # 2 (P4 - 96ch - stride 16)
+  - [0, 1, SelectFeature, [2]]   # 3 (P3 - 64ch - stride 8)
+  - [0, 1, SelectFeature, [1]]   # 4 (P2 - 32ch - stride 4)
+
+  # Language & Fusion (The "Command" take-in layer)
+  - [1, 1, LanguagePromptEncoder, [256, nm, 'embedding']] # 5 (Prompt -> 256ch Embedding)
+  - [1, 1, Conv, [256, 1, 1]]    # 6 (Compress Backbone P5: 960 -> 256)
+  - [[6, 5], 1, VLFusion, [256, 256]] # 7 (Fuse Compressed P5 with Command)
+
+  # Neck
+  - [7, 1, SPPF, [256, 5]]       # 8 (Fused P5 -> SPPF)
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 9
+  - [[-1, 2], 1, Concat, [1]]    # 10 (cat 256 + 96 = 352)
+  - [-1, 1, C3k2, [128, 1]]      # 11 (P4_neck)
+
+  - [-1, 1, nn.Upsample, [None, 2, 'bilinear']] # 12
+  - [[-1, 3], 1, Concat, [1]]    # 13 (cat 128 + 64 = 192)
+  - [-1, 1, C3k2, [64, 1]]       # 14 (P3_neck)
+
+  - [-1, 1, Conv, [64, 3, 2]]    # 15
+  - [[-1, 11], 1, Concat, [1]]   # 16
+  - [-1, 1, C3k2, [128, 1]]      # 17
+
+  - [-1, 1, Conv, [128, 3, 2]]   # 18
+  - [[-1, 8], 1, Concat, [1]]    # 19
+  - [-1, 1, C3k2, [256, 1]]      # 20
+
+  # Multi-Task Heads
+  - [[14, 17, 20], 1, Detect, [nc]]        # 21 (Detection)
+  - [[14, 4], 1, HeatmapHead, [1, 64, 3]]  # 22 (Heatmap): [P3_neck, P2_backbone] full resolution
+  - [[20, 22], 1, TrajectoryHead, [nm, nw]] # 23 (Trajectory)
+  - [20, 1, ClassificationHead, [nm]]      # 24 (Commands)
