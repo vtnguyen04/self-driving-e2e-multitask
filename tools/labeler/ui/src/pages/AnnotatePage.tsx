@@ -134,6 +134,58 @@ export const AnnotatePage: React.FC = () => {
     }
   }, [setSearchParams, selectedFilename, currentData, handleSave, isLoadingData]);
 
+  const handleDeleteImage = useCallback(async () => {
+    if (!selectedFilename || samples.length === 0 || !window.confirm("Delete image?")) return;
+
+    setIsLoadingData(true);
+    const currentIndex = samples.findIndex(s => s.filename === selectedFilename);
+    const filenameToDelete = selectedFilename;
+    const nextSamples = samples.filter(s => s.filename !== filenameToDelete);
+
+    try {
+        // Prevent auto-save from trying to save the deleted file
+        lastSavedDataJson.current = JSON.stringify(currentData);
+
+        await API.labels.delete(filenameToDelete);
+
+        // Update samples list locally (no re-fetch needed)
+        setSamples(nextSamples);
+
+        if (nextSamples.length > 0) {
+            const nextIdx = currentIndex >= nextSamples.length ? nextSamples.length - 1 : currentIndex;
+            const nextFilename = nextSamples[nextIdx].filename;
+
+            // Load next file data directly (skip handleSelect to avoid save-before-select on deleted file)
+            setSelectedFilename(nextFilename);
+            setSelectedBBoxIdx(null);
+            try {
+                const data = await API.labels.get(nextFilename);
+                const dataState = {
+                    bboxes: data.bboxes || [],
+                    waypoints: data.waypoints || [],
+                    control_points: data.control_points || [],
+                    command: data.command || 0
+                };
+                setCurrentData(dataState);
+                lastSavedDataJson.current = JSON.stringify(dataState);
+                setHistory([]);
+                setSearchParams({ file: nextFilename }, { replace: true });
+            } catch (loadError) {
+                console.error("Failed to load next file after delete", loadError);
+            }
+        } else {
+            setSelectedFilename(null);
+            setCurrentData({ bboxes: [], waypoints: [], control_points: [], command: 0 });
+            setSearchParams({}, { replace: true });
+        }
+    } catch (error) {
+        console.error("Delete failed", error);
+        alert("Failed to delete image");
+    } finally {
+        setIsLoadingData(false);
+    }
+  }, [selectedFilename, samples, currentData, setSearchParams]);
+
   const handleUpdate = useCallback((updated: Partial<Sample>) => {
     const finalUpdate: Partial<CurrentDataState> = { ...updated };
 
@@ -250,12 +302,12 @@ export const AnnotatePage: React.FC = () => {
                 handleSelect(samples[0].filename).catch(console.error);
             }
             initialized.current = true;
-        } else if (selectedFilename && !isCurrentInSamples) {
+        } else if (selectedFilename && !isCurrentInSamples && !isLoadingData) {
             // Current file disappeared from filtered list, jump to first
             handleSelect(samples[0].filename).catch(console.error);
         }
     }
-  }, [samples, initialFile, handleSelect, selectedFilename]);
+  }, [samples, initialFile, handleSelect, selectedFilename, isLoadingData]);
 
   const filteredClasses = useMemo(() => {
     return classes.map((c, i) => ({ name: c, id: i }))
@@ -397,7 +449,7 @@ export const AnnotatePage: React.FC = () => {
              <div className="p-8 border-t border-white/10 flex justify-center gap-8 bg-white/5">
                 <button onClick={async () => { if (selectedFilename) { await API.labels.duplicate(selectedFilename, `copy_${Date.now()}_${selectedFilename}`); await loadFiles(); } }} title="Duplicate" className="text-white hover:text-accent transition-all hover:scale-125"><Copy className="w-6 h-6" /></button>
                 <button onClick={async () => { if (selectedFilename && window.confirm("Reset all labels?")) { await API.labels.reset(selectedFilename); await handleSelect(selectedFilename); } }} title="Reset" className="text-white hover:text-orange-400 transition-all hover:scale-125"><RotateCcw className="w-6 h-6" /></button>
-                <button onClick={async () => { if (selectedFilename && window.confirm("Delete image?")) { await API.labels.delete(selectedFilename); await loadFiles(); setSelectedFilename(null); } }} title="Delete" className="text-white hover:text-red-500 transition-all hover:scale-125"><Trash2 className="w-6 h-6" /></button>
+                <button onClick={handleDeleteImage} title="Delete" className="text-white hover:text-red-500 transition-all hover:scale-125"><Trash2 className="w-6 h-6" /></button>
              </div>
         </aside>
 
