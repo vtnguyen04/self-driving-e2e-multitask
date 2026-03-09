@@ -278,6 +278,11 @@ class TrajectoryHead(BaseHead):
             nn.Linear(512, 4 * 2) # 4 Control Points (x, y)
         )
 
+        # Predict existence/confidence of trajectory (navigable vs roadblock)
+        self.exist_head = nn.Sequential(
+            nn.Linear(512, 1)
+        )
+
         # Bezier/Bernstein Registration
         t = torch.linspace(0, 1, num_waypoints)
         self.register_buffer('bernstein_m', self._compute_bernstein_matrix(t)) # [T, 4]
@@ -330,6 +335,9 @@ class TrajectoryHead(BaseHead):
 
         # Predict Control Points
         cp = torch.tanh(self.traj_head(h)).view(B, 4, 2)
+        
+        # Predict Trajectory Existence (Logits)
+        has_traj_logit = self.exist_head(h) # [B, 1]
 
         # Bezier Interpolation (Bernstein)
         waypoints = torch.einsum('nk,bkd->bnd', self.bernstein_m, cp)
@@ -337,7 +345,7 @@ class TrajectoryHead(BaseHead):
         # Safety
         waypoints = torch.nan_to_num(waypoints, 0.0)
 
-        res = {'waypoints': waypoints, 'control_points': cp}
+        res = {'waypoints': waypoints, 'control_points': cp, 'has_traj_logit': has_traj_logit}
         return {'trajectory': res, **res}
 
 class Segment(Detect):

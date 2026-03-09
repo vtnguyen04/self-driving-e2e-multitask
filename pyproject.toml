@@ -35,6 +35,8 @@ dependencies = [
     "psutil",
     "minio",
     "onnxsim>=0.4.36",
+    "pynvml>=13.0.1",
+    "tensorrt>=10.15.1.29",
 ]
 
 [tool.setuptools]

@@ -66,7 +66,7 @@ class BaseTrainer:
         self.optimizer = None
         self.scheduler = None
         self.ema = None
-        self.scaler = torch.amp.GradScaler('cuda', enabled=self.cfg.trainer.use_amp)
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.cfg.trainer.use_amp, growth_interval=2000)
         self.epoch = 0
         self.best_fitness = 0.0
         self.fitness = 0.0
@@ -372,6 +372,14 @@ class Trainer(BaseTrainer):
                 loss_dict = self.criterion.advanced(output, batch['targets'])
                 loss = loss_dict['total']
 
+            # CRITICAL: Skip backward + optimizer step if loss is NaN/Inf
+            # This prevents NaN gradients from corrupting model weights permanently
+            if not torch.isfinite(loss):
+                logger.warning(f"NaN/Inf Loss at Epoch {self.epoch} Batch {batch_idx} — skipping step")
+                # Zero gradients to keep scaler state clean, then continue
+                self.optimizer.zero_grad(set_to_none=True)
+                continue
+
             self.scaler.scale(loss).backward()
             self._update_optimizer()
 
@@ -398,6 +406,7 @@ class Trainer(BaseTrainer):
         cmd = batch['command'].to(self.device)
         targets = {
             'waypoints': batch['waypoints'].to(self.device),
+            'waypoints_mask': batch.get('waypoints_mask', torch.ones(img.size(0))).to(self.device),
             'bboxes': batch['bboxes'].to(self.device),
             'cls': batch.get('cls', batch.get('categories')).to(self.device),
             'batch_idx': batch.get('batch_idx', torch.zeros(0)).to(self.device),
@@ -411,6 +420,22 @@ class Trainer(BaseTrainer):
     def _update_optimizer(self):
         """Global gradient scaling, clipping, and optimizer step."""
         self.scaler.unscale_(self.optimizer)
+
+        # Check for NaN/Inf gradients BEFORE clipping/stepping
+        # GradScaler only handles Inf, NOT NaN — we must handle NaN ourselves
+        has_nan_grad = False
+        for p in self.model.parameters():
+            if p.grad is not None and not torch.isfinite(p.grad).all():
+                has_nan_grad = True
+                break
+
+        if has_nan_grad:
+            # Zero all gradients to prevent weight corruption
+            self.optimizer.zero_grad(set_to_none=True)
+            # Still update scaler to reduce the scale factor
+            self.scaler.update()
+            return
+
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.trainer.grad_clip_norm)
         self.scaler.step(self.optimizer)
         self.scaler.update()
@@ -487,6 +512,10 @@ class Trainer(BaseTrainer):
                     self.train_loader.dataset.close_mosaic()
 
             self.train_one_epoch(train_loader)
+
+            # Free GPU memory before validation to prevent OOM on low-VRAM GPUs
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Validation
             self.callbacks.on_val_start(self)

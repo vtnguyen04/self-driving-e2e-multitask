@@ -58,9 +58,15 @@ class CommandGate(nn.Module):
             Tensor: [B, 1, 1] gating weight
         """
         B, C, H, W = x.shape
-        x_gap = self.gap(x).view(B, C)
-        gate = self.fc(x_gap).view(B, 1, 1)
-        return gate
+        with torch.amp.autocast('cuda', enabled=False):
+            x_f32 = x.float()
+            # Prevent extreme values from blowing up the Linear layers
+            x_f32 = torch.clamp(torch.nan_to_num(x_f32, nan=0.0, posinf=10.0, neginf=-10.0), -10.0, 10.0)
+            x_gap = self.gap(x_f32).view(B, C)
+            gate = self.fc(x_gap).view(B, 1, 1)
+            # Ensure the output is clean
+            gate = torch.clamp(torch.nan_to_num(gate, nan=0.5), 0.0, 1.0)
+        return gate if x.dtype != torch.float16 else gate.half()
 
 class VLFusion(nn.Module):
     """Vision-Language Fusion module using Cross-Attention and Context Gating.
@@ -77,7 +83,7 @@ class VLFusion(nn.Module):
 
         # Context Gate to filter command relevance
         self.gate = CommandGate(c1)
-        
+
         # Learnable residual gain, start at 1.0 to ensure command signal is present immediately
         self.resid_gain = nn.Parameter(torch.ones(1))
 
@@ -111,6 +117,59 @@ class VLFusion(nn.Module):
 
         vision = x_flat.permute(0, 2, 1).reshape(B, C, H, W)
         return {"feats": vision, "gate_score": gate_score}
+
+class CFRBridge(nn.Module):
+    """
+    Causal Feature Router Bridge.
+    Enforces asymmetric causal graph: Perception -> Planning.
+    Takes Planning features as Query, and Perception features as Key/Value.
+    CRITICAL: Applies stop_gradient to Perception features to prevent
+    Planning task from corrupting the Perception backbone.
+    """
+    forward_with_kwargs = True
+    def __init__(self, c_plan, c_percept, num_heads=4):
+        super().__init__()
+        self.q = nn.Linear(c_plan, c_plan)
+        # Project perception features to match planning dimension
+        self.k = nn.Linear(c_percept, c_plan)
+        self.v = nn.Linear(c_percept, c_plan)
+
+        self.mha = nn.MultiheadAttention(c_plan, num_heads, batch_first=True)
+        self.norm = nn.LayerNorm(c_plan)
+        self.resid_gain = nn.Parameter(torch.zeros(1)) # Start at 0, learn to use perception
+
+    def forward(self, x, **kwargs):
+        """
+        x: List containing [Planning_Features, Perception_Features]
+        """
+        if isinstance(x, list) and len(x) >= 2:
+            feat_plan = x[0]
+            feat_percept = x[1]
+        else:
+            raise ValueError("CFRBridge requires a list of [Planning_Features, Perception_Features]")
+
+        B, C_p, H_p, W_p = feat_plan.shape
+        _, C_d, H_d, W_d = feat_percept.shape
+
+        # Flatten spatial dimensions
+        plan_flat = feat_plan.flatten(2).permute(0, 2, 1)       # [B, H*W, C_plan]
+        percept_flat = feat_percept.flatten(2).permute(0, 2, 1) # [B, H*W, C_percept]
+
+        # THE CAUSAL CHOKEPOINT: Stop gradient from flowing back to Perception
+        percept_causal = percept_flat.detach()
+
+        # Cross-Attention: Planning queries Perception
+        q = self.q(plan_flat)
+        k = self.k(percept_causal)
+        v = self.v(percept_causal)
+
+        attn_out, _ = self.mha(q, k, v)
+
+        # Gated Residual Connection
+        out_flat = self.norm(plan_flat + self.resid_gain * attn_out)
+        out = out_flat.permute(0, 2, 1).reshape(B, C_p, H_p, W_p)
+
+        return out
 
 class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
     """Semantic mapping for commands using cached CLIP embeddings with synonym support."""
@@ -170,7 +229,7 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
                 # Fallback to zero (Straight) if no command provided
                 B = x.shape[0] if hasattr(x, 'shape') else 1
                 indices = torch.zeros(B, dtype=torch.long, device=getattr(x, 'device', 'cpu'))
-        
+
         # Ensure indices is 1D
         if torch.is_tensor(indices) and indices.dim() > 1:
             if indices.shape[-1] == 4: # One-hot

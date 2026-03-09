@@ -33,6 +33,7 @@ _SAFE_MAP = {
     "ClassificationHead": ClassificationHead,
     "Concat": Concat,
     "VLFusion": VLFusion,
+    "CFRBridge": CFRBridge,
     "LanguagePromptEncoder": LanguagePromptEncoder,
 }
 
@@ -157,6 +158,12 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
         heads = args[2] if len(args) > 2 else 4
         args = [vision_ch, lang_ch, heads]
         c2 = vision_ch
+    elif m is CFRBridge:
+        plan_ch = ch[f[0]]
+        percept_ch = ch[f[1]]
+        heads = args[0] if len(args) > 0 else 4
+        args = [plan_ch, percept_ch, heads]
+        c2 = plan_ch
     elif m is LanguagePromptEncoder:
         c2 = args[0]
         c2 = make_divisible(c2 * gw, 8)
@@ -283,19 +290,26 @@ class DetectionModel(nn.Module):
         if idx is not None:
             m = self.model[idx]
             s = 256
-            self.eval()
+
+            # Use training mode so Detect outputs its nested dictionary structure
+            self.train()
             with torch.no_grad():
-                y = self.forward(torch.zeros(1, ch, s, s))
-                # If y is a dict, find detection feats (feature maps, not processed bboxes)
-                feats = y.get("feats") if isinstance(y, dict) else y
+                # BS=2 to prevent BatchNorm1d from crashing during training mode init
+                y = self.forward(torch.zeros(2, ch, s, s))
+
+                # Fetch detection features accurately in multitask settings
+                feats = y
+                if isinstance(y, dict):
+                    if "detect" in y and isinstance(y["detect"], dict) and "feats" in y["detect"]:
+                        feats = y["detect"]["feats"]
+                    else:
+                        feats = y.get("feats", y)
+
                 if isinstance(feats, (list, tuple)):
                     m.stride = torch.tensor([s / x.shape[-2] for x in feats])
                 else:
-                    m.stride = torch.tensor(
-                        [s / feats.shape[-2]]
-                    )  # Adaptive stride for single scale
+                    m.stride = torch.tensor([s / feats.shape[-2]])  # Adaptive stride for single scale
             self.stride = m.stride
-            self.train()
 
         # Initialization
         self._initialize_weights()
@@ -390,7 +404,18 @@ class DetectionModel(nn.Module):
 
             # Collect task outputs from dict-returning heads
             if isinstance(xi, dict):
-                outputs.update(xi)
+                # Only overwrite 'feats' if it's explicitly detection features (list).
+                # This prevents single-scale heads (like Classification) from overriding the multi-scale detection feats needed by losses.
+                if "feats" in xi:
+                    if "feats" in outputs and isinstance(outputs["feats"], list) and not isinstance(xi["feats"], list):
+                        # Don't overwrite multi-scale feats with single-scale feats
+                        xi_copy = dict(xi)
+                        del xi_copy["feats"]
+                        outputs.update(xi_copy)
+                    else:
+                        outputs.update(xi)
+                else:
+                    outputs.update(xi)
 
             # Save output for 'from' references and advance
             y.append(xi if m.i in self.save else None)

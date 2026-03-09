@@ -18,6 +18,16 @@ class LossConfig(BaseModel):
     lambda_det: float = 0.01
     lambda_heatmap: float = 0.1
     lambda_smooth: float = 0.01
+    lambda_cls: float = 1.0
+    lambda_gate: float = 0.5
+    # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
+    use_fdat: bool = False
+    fdat_alpha_lane: float = 10.0
+    fdat_beta_lane: float = 1.0
+    fdat_alpha_inter: float = 5.0
+    fdat_beta_inter: float = 3.0
+    fdat_lambda_heading: float = 2.0
+    fdat_lambda_endpoint: float = 5.0
     # Fitness Weights (Must sum to 1.0 ideally)
     fitness_map50: float = 0.1
     fitness_map95: float = 0.2
@@ -59,7 +69,7 @@ class TrainerConfig(BaseModel):
     weight_decay: float = 1e-4
     warmup_epochs: float = 3.0
     warmup_momentum: float = 0.8
-    warmup_bias_lr: float = 0.1
+    warmup_bias_lr: float = 0.01
     device: str = "cuda"
     resume: Union[bool, str] = False
 

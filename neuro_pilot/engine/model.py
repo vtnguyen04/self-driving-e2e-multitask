@@ -38,6 +38,8 @@ class NeuroPilot(nn.Module):
             NeuroPilot._system_logged = True
 
         self.overrides = kwargs
+        self.overrides['scale'] = scale
+        if task: self.overrides['task'] = task
         self.task_wrapper = None
         self.model = None
         self.predictor = None
@@ -163,12 +165,15 @@ class NeuroPilot(nn.Module):
 
         final_scale = scale if scale != "n" else (ckpt_scale or "n")
 
-        overrides = (
-            {"model_cfg": model_cfg, "scale": final_scale}
-            if model_cfg
-            else {"scale": final_scale}
-        )
-        self._init_task(self.task_name, overrides=overrides)
+        # Merge defaults from checkpoint with manual overrides in self.overrides
+        overrides = {"model_cfg": model_cfg, "scale": final_scale}
+        if not model_cfg:
+             del overrides["model_cfg"]
+
+        # User overrides provided in constructor take precedence
+        final_overrides = {**overrides, **self.overrides}
+
+        self._init_task(self.task_name, overrides=final_overrides)
         self.task_wrapper.load_weights(weights_path)
         self.model = self.task_wrapper.model
 

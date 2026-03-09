@@ -84,13 +84,14 @@ class Validator(BaseValidator):
             gt_boxes = batch['bboxes'].to(self.device)
             gt_classes = batch.get('cls', batch.get('categories')).to(self.device)
 
-            # Inference
-            # Inference
-            preds = self.model(img, cmd=cmd)
+            # Inference — use AMP to match training VRAM usage
+            with torch.amp.autocast('cuda', enabled=True):
+                preds = self.model(img, cmd=cmd)
             self.current_output = preds # Expose for callbacks
 
             targets = {
                 'waypoints': gt_wp,
+                'waypoints_mask': batch.get('waypoints_mask', torch.ones(img.size(0))).to(self.device),
                 'bboxes': gt_boxes,
                 'cls': gt_classes,
                 'batch_idx': batch.get('batch_idx', torch.zeros(0)).to(self.device),
@@ -101,8 +102,11 @@ class Validator(BaseValidator):
             self.current_batch = batch # Expose for callbacks
 
             # Loss Calculation
-            loss_dict = self.criterion.advanced(preds, targets)
-            self.total_loss += loss_dict['total'].item()
+            with torch.amp.autocast('cuda', enabled=True):
+                loss_dict = self.criterion.advanced(preds, targets)
+            loss_val = loss_dict['total']
+            if torch.isfinite(loss_val):
+                self.total_loss += loss_val.item()
 
             # L1 Calculation (only if trajectory head exists)
             pred_path = preds.get('waypoints', preds.get('control_points'))

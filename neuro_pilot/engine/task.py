@@ -167,3 +167,46 @@ class MultiTask(BaseTask):
         if self.model is None:
             self.build_model()
         load_checkpoint(weights_path, self.model)
+
+
+@TaskRegistry.register("detection")
+class DetectionTask(MultiTask):
+    """Detection-only training. Disables trajectory, heatmap, classification, and gate losses."""
+
+    def __init__(self, cfg, overrides=None, backbone=None):
+        # Force detection-only lambdas before parent init
+        from neuro_pilot.cfg.schema import deep_update
+        loss_overrides = {
+            "loss": {
+                "lambda_traj": 0,
+                "lambda_heatmap": 0,
+                "lambda_cls": 0,
+                "lambda_smooth": 0,
+                "lambda_gate": 0,
+            }
+        }
+        if overrides:
+            overrides = deep_update(overrides, loss_overrides)
+        else:
+            overrides = loss_overrides
+        super().__init__(cfg, overrides, backbone)
+        logger.info("Task: Detection-only (trajectory/heatmap/cls losses disabled)")
+
+
+@TaskRegistry.register("trajectory")
+class TrajectoryTask(MultiTask):
+    """Trajectory-only training. Disables detection loss."""
+
+    def __init__(self, cfg, overrides=None, backbone=None):
+        from neuro_pilot.cfg.schema import deep_update
+        loss_overrides = {
+            "loss": {
+                "lambda_det": 0,
+            }
+        }
+        if overrides:
+            overrides = deep_update(overrides, loss_overrides)
+        else:
+            overrides = loss_overrides
+        super().__init__(cfg, overrides, backbone)
+        logger.info("Task: Trajectory-only (detection loss disabled)")

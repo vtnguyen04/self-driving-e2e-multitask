@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 class Sample(BaseModel):
@@ -46,7 +46,9 @@ class NeuroPilotDataset(Dataset):
         # Initialize Mosaic Augmentor
         from neuro_pilot.data.augment import Mosaic
         p = getattr(self.transform, 'mosaic_prob', 1.0) if self.split == 'train' else 0.0
-        self.mosaic = Mosaic(self, imgsz=self.imgsz, p=p)
+        # Fix: ensure imgsz is integer for Mosaic
+        m_imgsz = self.imgsz[0] if isinstance(self.imgsz, tuple) else self.imgsz
+        self.mosaic = Mosaic(self, imgsz=m_imgsz, p=p)
 
     def close_mosaic(self):
         """Disable Mosaic augmentation."""
@@ -117,6 +119,7 @@ class NeuroPilotDataset(Dataset):
             for c, b, k in zip(cls_all, bboxes_norm, kpts_norm):
                 if c == 98: # Dedicated Trajectory Class
                     if not final_wp_norm:
+                        # Modified: ensure it's a fixed length or tracked
                         step = 3 if len(k) % 3 == 0 and len(k) > 0 else 2
                         for i in range(0, len(k), step):
                             if i + 1 < len(k):
@@ -197,7 +200,9 @@ class NeuroPilotDataset(Dataset):
 
         img = cv2.imread(str(img_path))
         if img is None:
-            img = np.zeros((self.imgsz, self.imgsz, 3), dtype=np.uint8)
+            # Revert to integer imgsz if needed for safety
+            s = self.imgsz[0] if isinstance(self.imgsz, tuple) else self.imgsz
+            img = np.zeros((s, s, 3), dtype=np.uint8)
 
         h0, w0 = img.shape[:2]
         pixel_bboxes, categories = [], []
@@ -256,6 +261,7 @@ class NeuroPilotDataset(Dataset):
         _, h_final, w_final = img_t.shape
 
         # Normalize Waypoints to [-1, 1] range
+        wp_mask_val = 1.0
         if len(wp_aug) > 0:
             wp_t = torch.tensor(wp_aug, dtype=torch.float32)
             if wp_t.ndim == 1: wp_t = wp_t.unsqueeze(0) # Handle single point case
@@ -264,6 +270,7 @@ class NeuroPilotDataset(Dataset):
             wp_t = torch.clamp(wp_t, -1.0, 1.0)
         else:
             wp_t = torch.zeros((0, 2), dtype=torch.float32)
+            wp_mask_val = 0.0
 
         # Normalize BBoxes to [0, 1] range [cx, cy, w, h]
         bboxes_t = []
@@ -283,14 +290,15 @@ class NeuroPilotDataset(Dataset):
         # Heatmap based on target resolution
         hm_h, hm_w = h_final // 4, w_final // 4
         heatmap = torch.zeros((hm_h, hm_w))
-        for wp in wp_aug:
-             hx, hy = int(wp[0] / 4), int(wp[1] / 4)
-             if 0 <= hx < hm_w and 0 <= hy < hm_h:
-                  heatmap[hy, hx] = 1.0
+        if wp_mask_val > 0.5:
+            for wp in wp_aug:
+                 hx, hy = int(wp[0] / 4), int(wp[1] / 4)
+                 if 0 <= hx < hm_w and 0 <= hy < hm_h:
+                      heatmap[hy, hx] = 1.0
 
         return {
             'image': img_t, 'command': cmd_onehot, 'command_idx': sample.command,
-            'waypoints': wp_t, 'bboxes': bboxes_t, 'categories': cls_t,
+            'waypoints': wp_t, 'waypoints_mask': torch.tensor(wp_mask_val), 'bboxes': bboxes_t, 'categories': cls_t,
             'heatmap': heatmap, 'image_path': str(sample.image_path),
             'curvature': torch.tensor(0.0)
         }
@@ -318,6 +326,11 @@ def custom_collate_fn(batch):
         else:
             collated_wp.append(wp)
     collated['waypoints'] = torch.stack(collated_wp)
+
+    # Handle waypoints_mask
+    if 'waypoints_mask' in batch[0]:
+        collated['waypoints_mask'] = torch.stack([b['waypoints_mask'] for b in batch])
+
     collated['heatmap'] = torch.stack([b['heatmap'] for b in batch])
     collated['curvature'] = torch.stack([b['curvature'] for b in batch])
 

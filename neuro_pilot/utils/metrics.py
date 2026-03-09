@@ -411,7 +411,7 @@ def compute_ap(recall: list[float], precision: list[float]) -> tuple[float, np.n
     mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
 
     x = np.linspace(0, 1, 101)
-    ap = np.trapz(np.interp(x, mrec, mpre), x)
+    ap = np.trapezoid(np.interp(x, mrec, mpre), x)
     return ap, mpre, mrec
 
 def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, on_plot=None, save_dir=Path(), names={}, eps=1e-16, prefix=""):

@@ -12,7 +12,7 @@ from .ops import decode_and_nms, xywh2xyxy
 
 class NeuroPlot:
     """Namespace for NeuroPilot plotting configurations and metadata."""
-    VERSION = "2.2.0"
+    VERSION = "2.2.1"
     PROJECT = "NeuroPilot AI"
     BACKEND = "Dual (PIL + CV2)"
 
@@ -345,17 +345,39 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
         ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)
 
         if wp_gt is not None:
-            wp_gt = (wp_gt + 1) / 2 * [W, H]
-            # Increased thickness based on user request ("tăng độ dày")
-            ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=5); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=5)
+            # Check if this image actually has valid GT waypoints by seeing if its index is in batch_idx_waypoints
+            has_gt_wp = True
+            if 'batch_idx_waypoints' in targets_i:
+                has_gt_wp = (targets_i['batch_idx_waypoints'] == i).any().item()
+            else:
+                # Fallback heuristic: if all waypoints are EXACTLY 0.0 (padding), skip drawing
+                if np.all(wp_gt == 0.0):
+                    has_gt_wp = False
+
+            if has_gt_wp:
+                wp_gt = (wp_gt + 1) / 2 * [W, H]
+                # Increased thickness based on user request ("tăng độ dày")
+                ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=5); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=5)
 
         if output is not None and 'waypoints' in output:
-            wp_p = output['waypoints']
-            if isinstance(wp_p, dict): wp_p = wp_p.get('waypoints', next(iter(wp_p.values())))
-            wp_p = wp_p[i].detach().cpu().numpy()
-            if not np.isnan(wp_p).any():
-                wp_p = (wp_p + 1) / 2 * [W, H]
-                ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=5); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=5)
+            # Filter prediction using the trajectory existence logit
+            show_pred = True
+            if 'has_traj_logit' in output:
+                traj_conf = torch.sigmoid(output['has_traj_logit'][i]).item()
+                if traj_conf < 0.01:
+                    show_pred = False
+
+            if 'has_traj_logit' in output:
+                traj_conf = torch.sigmoid(output['has_traj_logit'][i]).item()
+                ann_p.text((10, 40), f"Conf: {traj_conf:.2f}", color=(255, 255, 0))
+
+            if show_pred:
+                wp_p = output['waypoints']
+                if isinstance(wp_p, dict): wp_p = wp_p.get('waypoints', next(iter(wp_p.values())))
+                wp_p = wp_p[i].detach().cpu().numpy()
+                if not np.isnan(wp_p).any():
+                    wp_p = (wp_p + 1) / 2 * [W, H]
+                    ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=5); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=5)
 
         # Reduced scale from 1.4 to 1.0 based on user feedback
         ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)

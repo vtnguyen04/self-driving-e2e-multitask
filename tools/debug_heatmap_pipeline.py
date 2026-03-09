@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrainConfig:
-    dataset_yaml: str = "/home/quynhthu/Documents/AI-project/e2e/tools/labeler/data/exports/project_12/v1/data.yaml"
+    dataset_yaml: str = "/home/quynhthu/Documents/AI-project/e2e/tools/labeler/data/exports/project_17/data_final/data.yaml"
     batch_size: int = 16
     image_size: int = 320
     num_workers: int = 1
     epochs: int = 100
-    lr: float = 1e-3
+    lr: float = 5e-3
     weight_decay: float = 1e-4
     grad_clip: float = 10.0
     nc: int = 14
@@ -194,7 +194,7 @@ class Visualizer:
 
 def build_model_and_optimizer(cfg: TrainConfig, device: torch.device):
     repo_root = Path(__file__).resolve().parent.parent
-    model_cfg = repo_root / "neuro_pilot/cfg/models/yolo_style.yaml"
+    model_cfg = repo_root / "neuro_pilot/cfg/models/neuralPilot_dual.yaml"
     model = DetectionModel(
         cfg=str(model_cfg),
         nc=cfg.nc,

@@ -1,0 +1,98 @@
+# NeuroPilot with YOLO11 Backbone - CAUSAL FEATURE ROUTING (CFR) ARCHITECTURE
+nc: 14
+nm: 4
+nw: 10
+
+scales:
+  n: [0.50, 0.25, 1024]
+  s: [0.50, 0.50, 1024]
+  m: [0.50, 1.00, 512]
+  l: [1.00, 1.00, 512]
+  x: [1.00, 1.50, 512]
+
+# Shared Low-Level Stem (Edges, Textures)
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]                  # 0  - P1/2
+  - [-1, 1, Conv, [128, 3, 2]]                 # 1  - P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]]          # 2
+
+head:
+  # ==========================================
+  # BRANCH 1: PERCEPTION (Detection)
+  # ==========================================
+  # Perception Stem
+  - [2, 1, Conv, [256, 3, 2]]                  # 3  - P3/8 (Perception)
+  - [-1, 2, C3k2, [512, False, 0.25]]          # 4  (P3 features)
+  - [-1, 1, Conv, [512, 3, 2]]                 # 5  - P4/16 (Perception)
+  - [-1, 2, C3k2, [512, True]]                 # 6  (P4 features)
+  - [-1, 1, Conv, [1024, 3, 2]]                # 7  - P5/32 (Perception)
+  - [-1, 2, C3k2, [1024, True]]                # 8
+  - [-1, 1, SPPF, [1024, 5]]                   # 9
+  - [-1, 2, C2PSA, [1024]]                     # 10 (P5 features)
+
+  # Perception Neck (FPN)
+  - [10, 1, SPPF, [256, 5]]                      # 11
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]   # 12
+  - [[-1, 6], 1, Concat, [1]]                     # 13 (cat P5_up + P4)
+  - [-1, 2, C3k2, [128, 1]]                       # 14 (P4_neck)
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]   # 15
+  - [[-1, 4], 1, Concat, [1]]                     # 16 (cat P4_neck_up + P3)
+  - [-1, 2, C3k2, [64, 1]]                        # 17 (P3_neck)
+
+  - [-1, 1, Conv, [64, 3, 2]]                     # 18
+  - [[-1, 14], 1, Concat, [1]]                    # 19 (cat P3_down + P4_neck)
+  - [-1, 2, C3k2, [128, 1]]                       # 20
+
+  - [-1, 1, Conv, [128, 3, 2]]                    # 21
+  - [[-1, 11], 1, Concat, [1]]                    # 22 (cat P4_down + P5)
+  - [-1, 2, C3k2, [256, 1]]                       # 23
+
+  # Perception Head
+  - [[17, 20, 23], 1, Detect, [nc]]               # 24 (Detection: P3, P4, P5)
+
+
+  # ==========================================
+  # BRANCH 2: DRIVING + CAUSAL ROUTING
+  # ==========================================
+  # Driving Stem
+  - [2, 1, Conv, [256, 3, 2]]                  # 25  - P3/8 (Driving)
+  - [-1, 2, C3k2, [512, False, 0.25]]          # 26  (P3 features)
+  - [-1, 1, Conv, [512, 3, 2]]                 # 27  - P4/16 (Driving)
+  - [-1, 2, C3k2, [512, True]]                 # 28  (P4 features)
+  - [-1, 1, Conv, [1024, 3, 2]]                # 29  - P5/32 (Driving)
+  - [-1, 2, C3k2, [1024, True]]                # 30
+  - [-1, 1, SPPF, [1024, 5]]                   # 31
+  - [-1, 2, C2PSA, [1024]]                     # 32 (P5 features)
+
+  # --- CAUSAL FEATURE ROUTER (CFR) BRIDGE ---
+  # Planning queries Perception. Gradient is blocked from flowing back to Perception.
+  - [[32, 10], 1, CFRBridge, [4]]              # 33 (Fuse P5_driving with P5_perception)
+
+  # Language Fusion for Driving
+  - [33, 1, LanguagePromptEncoder, [256, nm, 'embedding']] # 34
+  - [33, 1, Conv, [256, 1, 1]]                              # 35 (Compress P5)
+  - [[35, 34], 1, VLFusion, [256, 256]]                     # 36 (Fuse Compressed P5 with Command)
+
+  # Driving Neck (FPN)
+  - [36, 1, SPPF, [256, 5]]                      # 37 (Fused P5 → SPPF)
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]   # 38
+  - [[-1, 28], 1, Concat, [1]]                     # 39 (cat P5_up + P4)
+  - [-1, 2, C3k2, [128, 1]]                       # 40 (P4_neck)
+
+  - [-1, 1, nn.Upsample, [None, 2, 'nearest']]   # 41
+  - [[-1, 26], 1, Concat, [1]]                     # 42 (cat P4_neck_up + P3)
+  - [-1, 2, C3k2, [64, 1]]                        # 43 (P3_neck)
+
+  - [-1, 1, Conv, [64, 3, 2]]                     # 44
+  - [[-1, 40], 1, Concat, [1]]                    # 45 (cat P3_down + P4_neck)
+  - [-1, 2, C3k2, [128, 1]]                       # 46
+
+  - [-1, 1, Conv, [128, 3, 2]]                    # 47
+  - [[-1, 37], 1, Concat, [1]]                    # 48 (cat P4_down + fused P5)
+  - [-1, 2, C3k2, [256, 1]]                       # 49
+
+  # Driving Heads
+  - [[43, 1], 1, HeatmapHead, [1, 64, 3]]         # 50 (Heatmap: P3_neck + Shared P2)
+  - [[49, 50], 1, TrajectoryHead, [nm, nw]]        # 51 (Trajectory: P5 + heatmap context)
+  - [49, 1, ClassificationHead, [nm]]              # 52 (Commands: P5)
