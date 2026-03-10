@@ -69,3 +69,18 @@ filterwarnings = [
     "ignore:.*no transform to process it.*:UserWarning",
     "ignore:.*Support for class-based  is deprecated.*:pydantic.PydanticDeprecatedSince20",
 ]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "F823", # Local variable Path referenced before assignment,
+    "F811", # Redefinition of unused logger,
+    "E722", # Bare except,
+    "F401", # Unused import,
+    "E501", # Line too long
+    "E701", # Multiple statements on one line (colon)
+    "E702", # Multiple statements on one line (semicolon)
+    "E402", # Module level import not at top of file
+    "F403", # star imports
+    "F405", # star import usage
+]

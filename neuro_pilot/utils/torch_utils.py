@@ -1,5 +1,4 @@
 import torch
-import shutil
 import math
 from pathlib import Path
 from neuro_pilot.utils.logger import logger

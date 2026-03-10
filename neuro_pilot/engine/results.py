@@ -3,7 +3,6 @@ import torch
 import cv2
 from pathlib import Path
 from typing import Optional
-from PIL import Image, ImageDraw
 from neuro_pilot.utils.plotting import Annotator, colors
 
 class Results:
@@ -39,7 +38,7 @@ class Results:
             img = cv2.resize(self.orig_img, (int(w0 * gain), int(h0 * gain)))
             h, w = img.shape[:2]
         else:
-            h, w = h0, w0
+            _h, _w = h0, w0
             gain = 1.0
 
         # Adjust boxes/waypoints for the plotting resolution

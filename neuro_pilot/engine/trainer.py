@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import torch.optim as optim
 import torch.nn as nn
-from copy import deepcopy, copy
+from copy import deepcopy
 from torch.utils.data import DataLoader
 from neuro_pilot.utils.tqdm import TQDM
 from pathlib import Path
@@ -157,7 +157,6 @@ class BaseTrainer:
             'date': __import__('datetime').datetime.now().isoformat(),
         }
 
-        from neuro_pilot.utils.torch_utils import save_checkpoint
         save_checkpoint(state, is_best=is_best, filename=path.name, save_dir=str(path.parent))
 
     def stop_check(self):
@@ -283,7 +282,6 @@ class Trainer(BaseTrainer):
 
     def build_optimizer(self, model, name="auto", lr=0.001, momentum=0.9, decay=1e-5):
         """Construct an optimizer for the given model with parameter grouping."""
-        g = [[], [], []]  # 0: weights with decay, 1: biases, 2: other (norms, gains, etc)
         bn = (nn.BatchNorm2d, nn.BatchNorm1d, nn.LayerNorm)
 
         if name == "auto":

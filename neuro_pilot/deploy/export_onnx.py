@@ -1,8 +1,9 @@
+import argparse
 from neuro_pilot.engine.model import NeuroPilot
 
 def export_model(config_path, output_path):
     # Use the unified API for export
-    print(f"Initializing NeuroPilot for export...")
+    print("Initializing NeuroPilot for export...")
     model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml")
 
     print(f"Exporting to {output_path}...")

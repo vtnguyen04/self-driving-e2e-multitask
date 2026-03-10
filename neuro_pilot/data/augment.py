@@ -1,10 +1,10 @@
 import warnings
+from neuro_pilot.utils.logger import logger
 import random
 import cv2
 import numpy as np
 from typing import List, Dict, Any
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
 
 # Suppress Albumentations warnings about unused processors (noisy during training)
 warnings.filterwarnings("ignore", message=".*no transform to process it.*")
@@ -56,7 +56,6 @@ class Mosaic:
         mosaic_bboxes = []
         mosaic_cls = []
         mosaic_waypoints = []
-        has_waypoints = "waypoints" in labels
 
         for i, patch in enumerate([labels] + mix_labels):
             img = patch["img"]

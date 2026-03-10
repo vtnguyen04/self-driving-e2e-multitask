@@ -61,7 +61,7 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
         avg_latency = np.mean(latencies)
         p50 = np.percentile(latencies, 50)
         p95 = np.percentile(latencies, 95)
-        p99 = np.percentile(latencies, 99)
+        np.percentile(latencies, 99)
         std_dev = np.std(latencies)
         fps = 1000 / avg_latency if avg_latency > 0 else 0
 

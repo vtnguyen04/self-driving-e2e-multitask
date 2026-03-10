@@ -161,8 +161,8 @@ class LoadStreams:
             self.caps[i] = cv2.VideoCapture(s)
             if not self.caps[i].isOpened():
                 raise ConnectionError(f"Failed to open {st}")
-            w = int(self.caps[i].get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(self.caps[i].get(cv2.CAP_PROP_FRAME_HEIGHT))
+            int(self.caps[i].get(cv2.CAP_PROP_FRAME_WIDTH))
+            int(self.caps[i].get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = self.caps[i].get(cv2.CAP_PROP_FPS)
             self.frames[i] = max(int(self.caps[i].get(cv2.CAP_PROP_FRAME_COUNT)), 0) or float('inf')
             self.fps[i] = max((fps if np.isfinite(fps) else 0) or 30, 0)

@@ -38,7 +38,7 @@ def log_system_info():
         # OS and Python
         os_info = f"{platform.system()} {platform.release()}"
         python_info = f"Python-{platform.python_version()}"
-        
+
         # PyTorch and CUDA
         torch_info = f"torch-{torch.__version__}"
         cuda_available = torch.cuda.is_available()

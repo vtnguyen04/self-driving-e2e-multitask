@@ -1,7 +1,6 @@
 import argparse
 import cv2
 import torch
-import numpy as np
 from pathlib import Path
 import time
 from tqdm import tqdm

@@ -17,7 +17,7 @@ class TestModelPipeline(unittest.TestCase):
             },
             "trainer": {
                 "max_epochs": 1,
-                "use_amp": False 
+                "use_amp": False
             }
         }
         self.model = NeuroPilot(self.model_cfg_path, **self.overrides)
@@ -30,11 +30,11 @@ class TestModelPipeline(unittest.TestCase):
         Đảm bảo dữ liệu chuẩn bị trong data_v1 khớp hoàn toàn với kiến trúc mô hình.
         """
         print("\n--- Testing Model Pipeline with Real Data ---")
-        
+
         # 1. Load Data
         train_loader, _ = prepare_dataloaders(self.model.cfg_obj)
         batch = next(iter(train_loader))
-        
+
         # Chuyển batch sang device
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
@@ -44,15 +44,15 @@ class TestModelPipeline(unittest.TestCase):
         print(f"Executing forward pass on {self.device}...")
         # Lấy raw predictions từ model underlying
         preds = self.model.model(batch['image'], cmd=batch['command'])
-        
+
         self.assertIsNotNone(preds, "Model returned None for predictions")
-        
+
         # 3. Loss Calculation
         print("Building criterion and calculating Loss components...")
         self.model.task_wrapper.build_criterion() # Ensure criterion is built
         loss_dict = self.model.task_wrapper.criterion.advanced(preds, batch)
         total_loss = loss_dict['total']
-        
+
         # Monitor the Gate!
         if 'gate_score' in preds:
             gate_val = preds['gate_score'].mean().item()
@@ -63,7 +63,7 @@ class TestModelPipeline(unittest.TestCase):
 
         print(f"✅ Total Loss: {total_loss.item():.4f}")
         print(f"✅ Loss components: {loss_dict}")
-        
+
         self.assertFalse(torch.isnan(total_loss), "Loss is NaN!")
         self.assertGreater(total_loss.item(), 0, "Loss should be greater than 0")
 

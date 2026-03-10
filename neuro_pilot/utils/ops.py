@@ -1,5 +1,3 @@
-import sys
-import time
 import re
 import torch
 import numpy as np
@@ -156,7 +154,6 @@ def clean_str(s: str) -> str:
     """Clean string by replacing special characters with '_'."""
     return re.sub(pattern="[|@#!¡·$€%&()=?¿^*;:,¨`><+]", repl="_", string=s)
 
-from .nms import non_max_suppression, decode_and_nms, TorchNMS
 
 def xywh2ltwh(x):
     """

@@ -280,7 +280,7 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
 
     # Handle both direct and nested target structures from Trainer
     targets_root = batch.get('targets', batch)
-    bboxes_gt = targets_root.get('bboxes')
+    targets_root.get('bboxes')
     waypoints_gt = targets_root.get('waypoints')
 
     with torch.no_grad():

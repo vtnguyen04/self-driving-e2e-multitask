@@ -38,7 +38,6 @@ class TestTrainingResume(unittest.TestCase):
 
         # Explicitly clean up Phase 1 model to free GPU memory
         del model
-        import torch
         if torch.cuda.is_available(): torch.cuda.empty_cache()
 
         print("\n--- Phase 2: Resume Training (Target 2 Epochs) ---")

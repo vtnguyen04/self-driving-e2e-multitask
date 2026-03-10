@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from neuro_pilot.utils.logger import logger as LOGGER
 from neuro_pilot.utils.metrics import bbox_iou
-from neuro_pilot.utils.ops import xywh2xyxy, xyxy2xywh
 
 class TaskAlignedAssigner(nn.Module):
     """A task-aligned assigner for object detection."""
@@ -143,15 +142,15 @@ class TaskAlignedAssigner(nn.Module):
         # gt_bboxes: [bs, n_max_boxes, 4] in pixels
         n_anchors = xy_centers.shape[0]
         bs, n_boxes, _ = gt_bboxes.shape
-        
+
         # Split GT into left-top and right-bottom
         lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2) # [bs*n_boxes, 1, 2] each
-        
+
         # Calculate distance from anchor center to GT boundaries
         # centers: [1, na, 2], lt/rb: [bs*n_boxes, 1, 2]
         bbox_deltas = torch.cat((xy_centers[None] - lt, rb - xy_centers[None]), dim=2)
         bbox_deltas = bbox_deltas.view(bs, n_boxes, n_anchors, -1)
-        
+
         # Anchor is inside if all deltas > 0
         return bbox_deltas.amin(3).gt_(eps)
 

@@ -85,7 +85,7 @@ class Detect(BaseHead):
 
     def forward(self, x: list[torch.Tensor]):
         shape = x[0].shape  # BCHW
-        bs = shape[0]
+        shape[0]
 
         # Process each feature map
         one2many_preds = self.forward_head(x, **self.one2many)
@@ -105,7 +105,7 @@ class Detect(BaseHead):
 
         # INFERENCE
         # Re-organize raw predictions
-        bs = x[0].shape[0]
+        x[0].shape[0]
         box_preds = one2many_preds['boxes']
         score_preds = one2many_preds['scores']
 

@@ -1,6 +1,5 @@
 import tensorrt as trt
 import torch
-import numpy as np
 from typing import Dict, OrderedDict
 from neuro_pilot.utils.logger import logger
 

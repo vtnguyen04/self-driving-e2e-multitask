@@ -340,7 +340,7 @@ class DetectionModel(nn.Module):
             return
         n_p = sum(x.numel() for x in self.parameters())
         n_g = sum(x.numel() for x in self.parameters() if x.requires_grad)
-        n_l = len(list(self.modules()))  # All modules including subs
+        len(list(self.modules()))  # All modules including subs
         logger.info(
             f"Model Summary: {len(self.model)} layers, {n_p} parameters, {n_g} gradients"
         )

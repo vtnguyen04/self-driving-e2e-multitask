@@ -1,9 +1,8 @@
 
 import unittest
 import torch
-import torch.nn as nn
 from unittest.mock import MagicMock
-from neuro_pilot.engine.callbacks import Callback, CallbackList
+from neuro_pilot.engine.callbacks import Callback
 from neuro_pilot.engine.model import NeuroPilot
 
 class MockCallback(Callback):

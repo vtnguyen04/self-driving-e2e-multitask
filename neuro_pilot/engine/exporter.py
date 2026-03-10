@@ -1,8 +1,6 @@
 
 import torch
 import torch.nn as nn
-from pathlib import Path
-import json
 import onnx
 from neuro_pilot.utils.logger import logger
 

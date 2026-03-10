@@ -2,7 +2,7 @@ import sys
 import unittest
 import torch
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Localize mock to avoid halting other tests
 def hide_torchvision():

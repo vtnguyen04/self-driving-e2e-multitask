@@ -11,7 +11,6 @@ if str(ROOT) not in sys.path:
 from neuro_pilot.engine.model import NeuroPilot
 from neuro_pilot.engine.exporter import Exporter
 from neuro_pilot.utils.logger import logger
-import torch
 
 def export(args):
     # Load model
