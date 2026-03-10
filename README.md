@@ -1,83 +1,106 @@
+# 🏎️ NeuroPilot: Unified E2E Autonomous Driving Framework
+
+**NeuroPilot** is a high-performance, modular End-to-End (E2E) autonomous driving framework designed for multi-task perception and trajectory prediction. Built for efficiency, it targets edge deployment on platforms like **NVIDIA Jetson Orin Nano**.
+
+---
+
+## 🌟 Key Features
+
+-   **Multi-Task Learning (MTL)**: Simultaneous Trajectory Prediction and Object Detection (YOLO-style).
+-   **Advanced Backbones**: MobileNetV4-Conv-Small (via `timm`) for optimal speed-accuracy trade-off.
+-   **Gated Contextual Gating**: Trajectory prediction gated by visual context and command inputs (Follow, Left, Right, Straight).
+-   **FDAT Loss**: Frenet-Decomposed Anisotropic Trajectory Loss for lane-aware consistency.
+-   **Edge-Ready**: Optimized for ONNX and TensorRT with <30ms latency on Jetson.
+-   **Extensible Engine**: Highly decoupled architecture using a central `Registry` for tasks and models.
+
+---
+
 ## 🛠️ Installation
 
-We use `uv` for blazing fast dependency management.
+This project uses [uv](https://astral.sh/uv/) for high-speed dependency management.
 
 ```bash
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Sync dependencies
+# Sync dependencies and create venv
 uv sync
 ```
 
+---
+
 ## 🏃 Usage
 
-### Training
-
+### 📊 Training
+Start a multi-task training session with local configurations:
 ```bash
-uv run scripts/train.py
+uv run scripts/train.py --config neuro_pilot/cfg/default.yaml
 ```
 
-### Configuration
+### 🔍 Inference & Visualization
+Run inference on a video file to visualize trajectory and detection results:
+```bash
+uv run scripts/run_video_inference.py --weights path/to/best.pt --source path/to/video.mp4
+```
 
-Configurations are managed via YAML files in `neuro_pilot/cfg/`.
--   **Model Config**: `models/neuralPilot.yaml` (Backbone, Head setup).
+### 🏗️ Exporting for Edge
+Export your trained model to ONNX for TensorRT deployment:
+```bash
+uv run scripts/export.py --weights best.pt --imgsz 640
+```
 
-## �📂 Project Structure
+---
+
+## 📂 Project Structure
 
 ```text
 neuro_pilot/
-├── cfg/                # Model and Hyperparameter configurations
-├── core/               # Registry and core system logic
-├── data/               # Dataset logic (DatasetV2, Augmentations)
-├── deploy/             # ONNX/TensorRT Export and Deployment logic
-├── engine/             # Core Training/Inference Engine (Trainer, Predictor)
-├── models/             # Neural Network Architectures and Backbones
-├── nn/                 # Low-level Neural Network Modules (Tasks, Heads)
-├── tasks/              # Task-specific implementations (Detection, Atomic)
-└── utils/              # Utilities (Losses, Metrics, Ops, Plotting)
+├── cfg/                # YAML Configurations (Schema-validated)
+├── core/               # Central Registry & Core logic
+├── data/               # Dataloaders, Augmentations (DatasetV2)
+├── deploy/             # Deployment Backend (ONNX, PyTorch, TensorRT)
+├── engine/             # Logic: Trainer, Predictor, Validator, Results
+├── models/             # High-level Model Architectures
+├── nn/                 # Low-level Modules (Heads, Blocks, Tasks)
+├── tasks/              # Task Implementations (Detection, Trajectory)
+└── utils/              # Math, Metrics, Losses (FDAT), Plotting
 
-tests/                  # Categorized Test Suite
-├── benchmarks/         # Performance and Dataloading benchmarks
-├── data/               # Dataset and Augmentation tests
-├── engine/             # Core engine and trainer tests
-├── integration/        # End-to-End pipeline and CLI tests
-├── models/             # Architecture and layer-wise tests
-└── utils/              # Math, Loss, and Metric tests
-
-tools/
-└── labeler/            # Integrated Data Labeling Tool (FastAPI + MinIO)
+scripts/                # Production Scripts (Train, Inference, Export)
+tests/                  # Comprehensive PyTest Suite (Unit, Integration)
 ```
+
+---
 
 ## 🧪 Testing
 
-The project uses `pytest` for comprehensive testing. Tests are categorized for efficiency.
+NeuroPilot maintains high code quality through a categorized test suite:
 
 ```bash
 # Run all tests
 uv run pytest tests/
 
-# Run specific category (e.g., engine)
-uv run pytest tests/engine/
-
-## 🏷️ Data Labeling
-
-NeuroPilot includes an integrated labeling tool with S3-compatible storage (MinIO).
-
-# Start MinIO and the Labeler app
-uv run python tools/labeler/run.py
+# Run specific category (e.g., integration tests)
+uv run pytest tests/integration/
 ```
-The tool will automatically start MinIO via Docker and launch the FastAPI server at `http://localhost:8000`.
 
-## 📊 Metrics & Logging
+---
 
-NeuroPilot uses a **Flexible Metric System**:
--   **Trajectory**: Logs `L1_error` and `Smoothness`.
--   **Detection**: Logs `mAP@50`, `mAP@50-95`, `Precision`, `Recall`.
--   **Heatmap**: Logs `HeatmapLoss`.
+## 📊 Metrics & Monitoring
 
-Logs are saved to `experiments/{experiment_name}/` and include CSV metrics + TensorBoard/Plot visualizations.
+NeuroPilot tracks performance across multiple dimensions:
+-   **Trajectory**: L1 Error, Smoothness, and Heading Consistency.
+-   **Detection**: mAP@50, mAP@50-95 (COCO standard).
+-   **System**: Latency, Throughput, and Multi-task Uncertainty weighting.
+
+All experiments are logged to `runs/train/` with automated visualization plots and CSV logs.
+
+---
 
 ## 🤝 Contributing
 
-New tasks can be added by decorating a class with `@TaskRegistry.register("my_task")` in `neuro_pilot/tasks/`. No engine modification required!
+NeuroPilot is designed for extensibility. To add a new task:
+1. Define your task logic in `neuro_pilot/tasks/`.
+2. Register it using `@TaskRegistry.register("your_task")`.
+3. Configure it in your YAML file.
+
+No changes to the core training engine are required!
