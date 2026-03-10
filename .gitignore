@@ -44,3 +44,4 @@ tools/labeler/labels.db
 *.db
 /.mypy_cache
 /.ruff_cache
+neuro_pilot.egg-info/
