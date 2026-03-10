@@ -4,7 +4,7 @@ from neuro_pilot.nn.tasks import DetectionModel
 def test_heatmap_skip():
     device = 'cpu'
     # 1. Test with skip_heatmap_inference=True
-    model = DetectionModel(cfg="neuro_pilot/cfg/models/yolo_style.yaml", nc=14, skip_heatmap_inference=True).to(device)
+    model = DetectionModel(cfg="neuro_pilot/cfg/models/neuralPilot.yaml", nc=14, skip_heatmap_inference=True).to(device)
 
     B = 2
     img = torch.randn(B, 3, 320, 320).to(device)
@@ -25,7 +25,7 @@ def test_heatmap_skip():
     print(f"Skip=True, Train mode, Has heatmap: {has_heatmap_train}")
 
     # 2. Test with skip_heatmap_inference=False (default)
-    model_default = DetectionModel(cfg="neuro_pilot/cfg/models/yolo_style.yaml", nc=14, skip_heatmap_inference=False).to(device)
+    model_default = DetectionModel(cfg="neuro_pilot/cfg/models/neuralPilot.yaml", nc=14, skip_heatmap_inference=False).to(device)
     model_default.eval()
     with torch.no_grad():
         output_default = model_default(img, cmd=cmd)

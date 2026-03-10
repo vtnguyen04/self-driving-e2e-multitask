@@ -50,13 +50,16 @@ class TimmBackbone(nn.Module):
     def get_channels(model_name):
         """Helper to get feature channels without full instantiation if possible."""
         try:
+            import timm
             m = timm.create_model(model_name, pretrained=False, features_only=True)
             return m.feature_info.channels()
         except:
             # Fallback for common models if timm fails or in restricted env
             if 'mobilenetv4_conv_small' in model_name: return [32, 32, 64, 96, 960]
+            if 'mobilenetv4_conv_medium' in model_name: return [32, 48, 80, 160, 960]
+            if 'mobilenetv4_conv_large' in model_name: return [24, 48, 96, 192, 960]
             if 'resnet50' in model_name: return [64, 256, 512, 1024, 2048]
-            return [64, 128, 256, 512, 1024] # Generic fallback
+            return [64, 128, 256, 512, 960] # Generic fallback with P5 at 960
 
     def forward(self, x):
         return self.model(x)

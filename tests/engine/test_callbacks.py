@@ -20,7 +20,7 @@ class MockCallback(Callback):
 
 class TestCallbacks(unittest.TestCase):
     def setUp(self):
-        self.model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml", device='cpu')
+        self.model = NeuroPilot(model="neuro_pilot/cfg/models/neuralPilot.yaml", device='cpu')
         self.cb = MockCallback()
 
     def test_predict_callbacks(self):

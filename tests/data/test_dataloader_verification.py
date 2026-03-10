@@ -7,11 +7,11 @@ from neuro_pilot.cfg.schema import load_config
 
 class TestDataloaderVerification(unittest.TestCase):
     def setUp(self):
-        model_cfg_path = "neuro_pilot/cfg/models/yolo_all_tasks.yaml"
+        model_cfg_path = "neuro_pilot/cfg/models/neuralPilot.yaml"
         self.model = NeuroPilot(
             model_cfg_path,
             data={
-                "dataset_yaml": "data_v1/data.yaml",
+                "dataset_yaml": "data/data.yaml",
                 "batch_size": 2,
                 "image_size": 640,
                 "num_workers": 0,

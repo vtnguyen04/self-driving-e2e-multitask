@@ -8,7 +8,7 @@ class TestTrainingResume(unittest.TestCase):
     def setUp(self):
         self.exp_name = "test_resume_unittest"
         self.exp_dir = Path("experiments") / self.exp_name
-        self.data_dict = {'root_dir': 'data_v1', 'dataset_yaml': 'data_v1/data.yaml'}
+        self.data_dict = {'root_dir': 'data', 'dataset_yaml': 'data/data.yaml'}
 
         # Clean old weights
         if self.exp_dir.exists():

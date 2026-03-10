@@ -34,8 +34,8 @@ def test_augmentation_pipeline_output_range():
     }
     out = pipeline(labels)
 
-    assert out['img'].dtype == torch.float32
-    assert out['img'].shape == (3, 224, 224)
+    assert out['img'].dtype == np.uint8
+    assert out['img'].shape == (224, 224, 3)
 
     # Waypoints normalization check
     # StandardAugmentor returns 'waypoints' (pixel space transformed)
@@ -54,6 +54,6 @@ def test_augmentation_validity():
     }
     out = pipeline(labels)
 
-    assert out['img'].shape == (3, 224, 224)
+    assert out['img'].shape == (224, 224, 3)
     # StandardAugmentor returns bboxes in 'coco' format pixels
     assert len(out['bboxes']) == 1

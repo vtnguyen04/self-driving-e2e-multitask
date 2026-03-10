@@ -8,7 +8,7 @@ from neuro_pilot.nn.tasks import DetectionModel
 # We need to ensure timm is mocked ONLY for these tests
 class TestModelVariants(unittest.TestCase):
     def setUp(self):
-        self.cfg_path = "neuro_pilot/cfg/models/yolo_style.yaml"
+        self.cfg_path = "neuro_pilot/cfg/models/neuralPilot.yaml"
 
         # Create a mock timm module
         self.mock_timm = MagicMock()
@@ -19,6 +19,7 @@ class TestModelVariants(unittest.TestCase):
                 super().__init__()
                 self.feature_info = MagicMock()
                 # Mocking channels for MobileNetV4 variants
+                # Consistent channels across all variants for the mock
                 self.feature_info.channels.return_value = [32, 48, 64, 96, 960]
             def forward(self, x):
                 return [torch.zeros(x.shape[0], 32, x.shape[2]//2, x.shape[3]//2),
@@ -29,12 +30,12 @@ class TestModelVariants(unittest.TestCase):
 
         self.mock_timm.create_model.return_value = MockTimmModel()
 
-        # Patch sys.modules to inject our mock timm
-        self.timm_patcher = patch.dict(sys.modules, {'timm': self.mock_timm})
-        self.timm_patcher.start()
+        # Patch timm in the backbone module where it is used
+        self.patcher = patch('neuro_pilot.nn.modules.backbone.timm', self.mock_timm)
+        self.patcher.start()
 
     def tearDown(self):
-        self.timm_patcher.stop()
+        self.patcher.stop()
 
     def test_nano_variant(self):
         print("\n--- Testing Nano Variant (Scale='n') ---")

@@ -7,7 +7,7 @@ from neuro_pilot.engine.results import Results
 
 class TestUnifiedAPI(unittest.TestCase):
     def setUp(self):
-        self.model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml")
+        self.model = NeuroPilot(model="neuro_pilot/cfg/models/neuralPilot.yaml")
         self.test_img = torch.randn(1, 3, 640, 640)
 
     def test_predict_flow(self):

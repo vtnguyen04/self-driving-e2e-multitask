@@ -13,7 +13,7 @@ def test_full_pipeline():
     device = 'cpu'
 
     # 2. Model
-    model = NeuroPilotNet(cfg="neuro_pilot/cfg/models/yolo_style.yaml", nc=14).to(device)
+    model = NeuroPilotNet(cfg="neuro_pilot/cfg/models/neuralPilot.yaml", nc=14).to(device)
 
     # 3. Loss
     criterion = CombinedLoss(cfg, model, device=device)

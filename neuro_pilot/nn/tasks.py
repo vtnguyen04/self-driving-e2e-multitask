@@ -104,6 +104,8 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
     # Convolution-like modules
     if m in {Conv, Bottleneck, C3k2, SPPF, C2f, C3, C3k, C2PSA}:
         c1, c2 = ch[f], args[0]
+        if isinstance(c1, list):
+            c1 = c1[-1]
         if c2 != nc:  # if not output
             c2 = make_divisible(c2 * gw, 8)
         args = [c1, c2, *args[1:]]
@@ -114,7 +116,7 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
         c2 = ch[f]  # Upsample preserves channel count
         if len(args) == 2:
             args = [None, args[0], args[1]]
-    elif m is TimmBackbone:
+    elif m.__name__ == "TimmBackbone":
         model_name = args[0]
         if "mobilenetv4" in model_name:
             if scale == "n":
@@ -123,52 +125,52 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
                 model_name = "mobilenetv4_conv_medium.e500_r224_in1k"
             elif scale in ["m", "l", "x"]:
                 model_name = "mobilenetv4_conv_large.e600_r224_in1k"
-            args[0] = model_name
+        args[0] = model_name
         c2 = m.get_channels(model_name)
-    elif m is NeuroPilotBackbone:
+    elif m.__name__ == "NeuroPilotBackbone":
         model_name = args[0]
         c2 = m.get_channels(model_name)
-    elif m is SelectFeature:
+    elif m.__name__ == "SelectFeature":
         idx = args[0]
-        backbone_module = layers[f]
-        if hasattr(backbone_module, "output_channels"):
-            c2 = backbone_module.output_channels[idx]
+        backbone_ch = ch[f]
+        if isinstance(backbone_ch, (list, tuple)):
+            c2 = backbone_ch[idx]
+        elif isinstance(backbone_ch, dict):
+            c2 = backbone_ch[idx]
         else:
-            backbone_ch = ch[f]
-            if isinstance(backbone_ch, dict):
-                c2 = backbone_ch[idx]
-            elif isinstance(backbone_ch, (list, tuple)):
-                c2 = backbone_ch[idx]
-            else:
-                c2 = backbone_ch
-    elif m in {Detect, Segment, HeatmapHead, TrajectoryHead, ClassificationHead}:
+            c2 = backbone_ch
+    elif m.__name__ in {"Detect", "Segment", "HeatmapHead", "TrajectoryHead", "ClassificationHead"}:
         c2 = ch[f[0]] if isinstance(f, list) else ch[f]
         ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
         args.insert(0, ch_in)
-        if m is Segment:
+        if m.__name__ == "Segment":
             if len(args) > 2 and args[2] == "nm":
                 args[2] = d.get("nm")
             if len(args) > 3 and args[3] == "npr":
                 args[3] = d.get("npr", 256)
-    elif m is Concat:
-        c2 = sum(ch[x] for x in f)
-    elif m is VLFusion:
+    elif m.__name__ == "Concat":
+        c2 = sum(ch[x] if isinstance(ch[x], int) else ch[x][-1] for x in f)
+    elif m.__name__ == "VLFusion":
         vision_ch = ch[f[0]]
         lang_ch = ch[f[1]]
         heads = args[2] if len(args) > 2 else 4
         args = [vision_ch, lang_ch, heads]
         c2 = vision_ch
-    elif m is CFRBridge:
+    elif m.__name__ == "CFRBridge":
         plan_ch = ch[f[0]]
         percept_ch = ch[f[1]]
         heads = args[0] if len(args) > 0 else 4
         args = [plan_ch, percept_ch, heads]
         c2 = plan_ch
-    elif m is LanguagePromptEncoder:
-        c2 = args[0]
+    elif m.__name__ == "LanguagePromptEncoder":
+        c2 = args[0] # embed_dim IS a channel count, should be scaled
         c2 = make_divisible(c2 * gw, 8)
         args[0] = c2
-    else:
+        # nm (args[1]) should NOT be scaled as it is a category count
+
+
+    # Default c2 resolution
+    if c2 is None:
         c2 = ch[f] if isinstance(f, int) else ch[f[0]]
 
     return c2, args, n
@@ -195,7 +197,7 @@ def parse_model(d, ch):
         gw = d.get("width_multiple", 1.0)
     nc, nm, nw = d["nc"], d.get("nm"), d.get("nw")
 
-    layers, save, c2 = [], [], ch  # layers, savelist, ch out
+    layers, save, c1_map = [], [], {-1: ch[0]}
     for i, (f, n, m_name, args) in enumerate(d["backbone"] + d["head"]):
         m = _resolve_module(m_name)
 
@@ -206,20 +208,21 @@ def parse_model(d, ch):
         n_ = n
         n = _scale_depth(n, gd)
 
+        # Resolve f relative to i for channel discovery (e.g. -1 means i-1)
+        f_res = [x + i if x < 0 else x for x in (f if isinstance(f, list) else [f])]
+        f_res = f_res[0] if not isinstance(f, list) else f_res
+
         # Module-specific handling (channels, args, etc.)
-        c2, args, n = _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale)
+        c2, args, n = _handle_module_specials(m, f_res, n, args, c1_map, nc, gw, d, layers, scale)
 
         # Instantiate module(s)
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)
         t = str(m)[8:-2].replace("__main__.", "")
-        np = sum(x.numel() for x in m_.parameters())
-        m_.i, m_.f, m_.type, m_.np = i, f, t, np
-        logger.info(f"{i:>3}{str(f):>18}{n_:>3}{np:>10}  {t:<40}{str(args):<30}")
+        m_.i, m_.f, m_.type, m_.np = i, f, t, sum(x.numel() for x in m_.parameters())
+        logger.info(f"{i:>3}{str(f):>18}{n_:>3}{m_.np:>10}  {t:<40}{str(args):<30}")
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
         layers.append(m_)
-        if i == 0:
-            ch = []
-        ch.append(c2)
+        c1_map[i] = c2 # Register layer output
     return nn.Sequential(*layers), sorted(save)
 
 

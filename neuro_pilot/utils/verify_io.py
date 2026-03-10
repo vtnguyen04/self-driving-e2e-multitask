@@ -3,7 +3,7 @@ from neuro_pilot.nn.tasks import DetectionModel
 from loguru import logger
 import sys
 
-def verify_io(cfg_path="neuro_pilot/cfg/models/yolo_style.yaml"):
+def verify_io(cfg_path="neuro_pilot/cfg/models/neuralPilot.yaml"):
     logger.info(f"--- Verifying Model I/O Standards: {cfg_path} ---")
 
     device = torch.device("cpu")

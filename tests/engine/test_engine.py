@@ -7,8 +7,8 @@ class TestEngine(unittest.TestCase):
         # Use dummy config
         self.cfg_path = 'tests/dummy_model.yaml'
         # We need a dummy task that uses this config
-        # multitask task in engine/task.py uses 'yolo_style.yaml' by default or override
-        self.model = NeuroPilot(model=self.cfg_path, task="multitask", device='cpu')
+        # multitask task in engine/task.py uses 'neuralPilot.yaml' by default or override
+        self.model = NeuroPilot(model=self.cfg_path, task="multitask", device='cpu', scale='l')
 
     def test_neuropilot_init(self):
         self.assertIsNotNone(self.model.model)

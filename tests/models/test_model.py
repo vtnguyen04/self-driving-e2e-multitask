@@ -23,7 +23,7 @@ class ModelTestTask(BaseTask):
 class TestNeuroPilot(unittest.TestCase):
     def setUp(self):
         # Use a real config path
-        self.cfg_path = "neuro_pilot/cfg/models/yolo_style.yaml"
+        self.cfg_path = "neuro_pilot/cfg/models/neuralPilot.yaml"
         self.model = NeuroPilot(model=self.cfg_path, task="model_test_task_v2")
 
     def test_initialization(self):

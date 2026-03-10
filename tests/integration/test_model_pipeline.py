@@ -6,10 +6,10 @@ from neuro_pilot.data import prepare_dataloaders
 
 class TestModelPipeline(unittest.TestCase):
     def setUp(self):
-        self.model_cfg_path = "neuro_pilot/cfg/models/yolo_all_tasks.yaml"
+        self.model_cfg_path = "neuro_pilot/cfg/models/neuralPilot.yaml"
         self.overrides = {
             "data": {
-                "dataset_yaml": "data_v1/data.yaml",
+                "dataset_yaml": "data/data.yaml",
                 "batch_size": 4,
                 "image_size": 640,
                 "num_workers": 0,

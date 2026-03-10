@@ -63,7 +63,7 @@ class CommandGate(nn.Module):
             # Prevent extreme values from blowing up the Linear layers
             x_f32 = torch.clamp(torch.nan_to_num(x_f32, nan=0.0, posinf=10.0, neginf=-10.0), -10.0, 10.0)
             x_gap = self.gap(x_f32).view(B, C)
-            gate = self.fc(x_gap).view(B, 1, 1)
+            gate = self.fc(x_gap.to(next(self.parameters()).dtype)).view(B, 1, 1)
             # Ensure the output is clean
             gate = torch.clamp(torch.nan_to_num(gate, nan=0.5), 0.0, 1.0)
         return gate if x.dtype != torch.float16 else gate.half()
@@ -106,7 +106,7 @@ class VLFusion(nn.Module):
         x_flat = vision.flatten(2).permute(0, 2, 1) # [B, HW, C]
 
         # Calculate Context Relevance (Gate)
-        gate_score = self.gate(vision) # [B, 1, 1]
+        gate_score = self.gate(vision.to(next(self.parameters()).dtype)) # [B, 1, 1]
 
         # Cross-Attention
         attn_out, _ = self.mha(self.q(x_flat), self.k(lang_feats), self.v(lang_feats))

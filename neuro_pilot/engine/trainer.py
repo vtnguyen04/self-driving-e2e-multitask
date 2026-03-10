@@ -186,7 +186,7 @@ class Trainer(BaseTrainer):
             else:
                 logger.info("Loading default yolo_style model")
                 self.model = DetectionModel(
-                    cfg="neuro_pilot/cfg/models/yolo_style.yaml",
+                    cfg="neuro_pilot/cfg/models/neuralPilot.yaml",
                     nc=self.num_classes,
                     verbose=True
                 ).to(self.device)

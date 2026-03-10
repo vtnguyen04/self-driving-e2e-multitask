@@ -16,7 +16,7 @@ def verify_training_artifacts():
     cfg.data.image_size = 640
     cfg.data.root_dir = "neuro_pilot/data"
     cfg.trainer.device = "cuda" if torch.cuda.is_available() else "cpu"
-    cfg.model_config_path = "neuro_pilot/cfg/models/yolo_all_tasks.yaml"
+    cfg.model_config_path = "neuro_pilot/cfg/models/neuralPilot.yaml"
 
     exp_dir = Path("experiments") / "verify_artifacts"
     if exp_dir.exists():

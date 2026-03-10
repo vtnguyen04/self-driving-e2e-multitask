@@ -112,7 +112,7 @@ class NeuroPilot(nn.Module):
             ):
                 from neuro_pilot.nn.tasks import DetectionModel
 
-                scale = final_overrides.get("scale", "n")
+                scale = final_overrides.get("scale", "l")
                 skip_heatmap = final_overrides.get(
                     "skip_heatmap_inference", self.cfg_obj.head.skip_heatmap_inference
                 )
@@ -392,11 +392,13 @@ class NeuroPilot(nn.Module):
 
         # Timed loop
         n = 100
-        torch.cuda.synchronize() if device != "cpu" else None
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize()
         t1 = time.time()
         for _ in range(n):
             model(img, cmd=cmd)
-        torch.cuda.synchronize() if device != "cpu" else None
+        if device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.synchronize()
         t2 = time.time()
 
         dt = (t2 - t1) / n * 1000  # ms

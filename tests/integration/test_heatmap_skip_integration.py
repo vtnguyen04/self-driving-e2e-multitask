@@ -4,7 +4,7 @@ from neuro_pilot.engine.model import NeuroPilot
 def test_neuropilot_heatmap_skip():
     device = 'cpu'
     # Test with skip_heatmap_inference=True
-    model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml", skip_heatmap_inference=True, device=device)
+    model = NeuroPilot(model="neuro_pilot/cfg/models/neuralPilot.yaml", skip_heatmap_inference=True, device=device)
 
     B = 2
     img = torch.randn(B, 3, 320, 320).to(device)

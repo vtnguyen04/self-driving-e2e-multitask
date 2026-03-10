@@ -41,14 +41,10 @@ class TestAugmentationViz(unittest.TestCase):
         aug_labels = augmentor(labels)
 
         # 4. Verify
-        self.assertIsInstance(aug_labels['img'], torch.Tensor)
+        self.assertIsInstance(aug_labels['img'], np.ndarray)
         output_path = "augmentation_test_viz_real.jpg"
         # Visualization logic (simplified)
-        img_aug = aug_labels["img"].permute(1, 2, 0).numpy()
-        mean = np.array([0.485, 0.456, 0.406])
-        std = np.array([0.229, 0.224, 0.225])
-        img_viz = (img_aug * std + mean) * 255.0
-        img_viz = np.clip(img_viz, 0, 255).astype(np.uint8)
+        img_viz = aug_labels["img"]
         img_viz = cv2.cvtColor(img_viz, cv2.COLOR_RGB2BGR)
 
         cv2.imwrite(output_path, img_viz)

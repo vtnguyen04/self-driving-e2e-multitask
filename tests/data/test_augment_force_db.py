@@ -51,7 +51,7 @@ def test_force_augmentation_db():
     aug_labels = augmentor(labels)
 
     # 6. Verify and Visualize
-    assert isinstance(aug_labels['img'], torch.Tensor)
+    assert isinstance(aug_labels['img'], np.ndarray)
     print("Augmentation from DB successful.")
 
 if __name__ == "__main__":

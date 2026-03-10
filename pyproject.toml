@@ -29,8 +29,6 @@ dependencies = [
     "onnxscript>=0.5.7",
     "pydantic>=2.0",
     "rich",
-    "fastapi>=0.128.0",
-    "uvicorn>=0.40.0",
     "python-multipart>=0.0.21",
     "torchmetrics>=1.8.2",
     "scikit-learn>=1.7.2",
@@ -40,15 +38,14 @@ dependencies = [
     "omegaconf>=2.3.0",
     "onnxruntime<1.24.0",
     "psutil",
-    "minio",
     "onnxsim>=0.4.36",
     "pynvml>=13.0.1",
     "tensorrt>=10.15.1.29",
 ]
 
 [project.urls]
-Homepage = "https://github.com/vtnguyen04/self-driving-e2e-multitask"
-Repository = "https://github.com/vtnguyen04/self-driving-e2e-multitask"
+Homepage = "https://github.com/vtnguyen04/neuralPilot"
+Repository = "https://github.com/vtnguyen04/neuralPilot"
 
 [project.scripts]
 neuropilot = "neuro_pilot.entrypoint:main"

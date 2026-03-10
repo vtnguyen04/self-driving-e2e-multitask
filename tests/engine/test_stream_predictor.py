@@ -9,7 +9,7 @@ from neuro_pilot.engine.results import Results
 
 class TestStreamPredictor(unittest.TestCase):
     def setUp(self):
-        self.model = NeuroPilot(model="neuro_pilot/cfg/models/yolo_style.yaml")
+        self.model = NeuroPilot(model="neuro_pilot/cfg/models/neuralPilot.yaml")
         # Create a dummy image directory
         self.test_dir = "test_data_predict"
         os.makedirs(self.test_dir, exist_ok=True)
