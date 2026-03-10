@@ -63,6 +63,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["neuro_pilot*"]
 
+[tool.setuptools.package-data]
+neuro_pilot = ["**/*.yaml"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
