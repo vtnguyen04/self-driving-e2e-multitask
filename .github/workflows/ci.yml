@@ -26,5 +26,15 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
         run: uv python install 3.10
+
+      - name: Create Dummy Data
+        run: |
+          mkdir -p data/train/images data/val/images
+          touch data/data.yaml
+          echo 'path: data' > data/data.yaml
+          echo 'train: train/images' >> data/data.yaml
+          echo 'val: val/images' >> data/data.yaml
+          echo 'names: {0: class0}' >> data/data.yaml
+
       - name: Run tests
         run: uv run pytest tests/ -v
