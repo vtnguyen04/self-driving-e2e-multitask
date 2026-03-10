@@ -27,7 +27,7 @@ class NeuroPilot(nn.Module):
 
     def __init__(
         self,
-        model: Union[str, Path, nn.Module] = "neuro_pilot/cfg/models/neuralPilot.yaml",
+        model: Union[str, Path, nn.Module] = "neuralPilot.yaml",
         task: str = None,
         scale: str = "n",
         **kwargs,
@@ -140,6 +140,8 @@ class NeuroPilot(nn.Module):
 
     def _new(self, cfg_path: Union[str, Path], scale: str = "n"):
         """Initialize new model from config."""
+        from neuro_pilot.utils.checks import check_yaml
+        cfg_path = check_yaml(cfg_path)
         logger.info(
             f"Initializing NeuroPilot ({self.task_name}) from {cfg_path} (scale={scale})"
         )

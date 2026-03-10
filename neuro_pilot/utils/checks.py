@@ -132,6 +132,35 @@ def find_file(file: str | Path) -> str:
 
     return str(file)
 
+def check_yaml(file: str | Path) -> str:
+    """Finds YAML file and returns path. Searches locally and in package directory."""
+    file = str(file)
+    if os.path.isfile(file):
+        return file
+
+    # 1. Search locally in relative paths
+    if os.path.isfile(os.path.join("cfg", file)):
+        return os.path.join("cfg", file)
+
+    # 2. Search in package directory
+    import neuro_pilot
+    pkg_root = Path(neuro_pilot.__file__).parent
+    
+    # Check cfg/models/ and cfg/ (recursive search for safety)
+    search_paths = [
+        pkg_root / "cfg" / "models",
+        pkg_root / "cfg",
+    ]
+    
+    for p in search_paths:
+        if (p / file).exists():
+            return str(p / file)
+        if not file.endswith(".yaml") and (p / (file + ".yaml")).exists():
+            return str(p / (file + ".yaml"))
+
+    # 3. Last fallback (original path)
+    return file
+
 def print_args(args: dict):
     """Print training arguments in a professional Ultralytics format."""
     from neuro_pilot.utils.logger import logger
