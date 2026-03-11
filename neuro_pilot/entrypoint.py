@@ -20,7 +20,6 @@ def main():
     parser = argparse.ArgumentParser(description="NeuroPilot CLI", usage="neuropilot [MODE] [ARGS]")
     subparsers = parser.add_subparsers(dest="mode", help="Execution mode")
 
-    # TRAIN
     train = subparsers.add_parser("train", help="Train a model")
     train.add_argument("model", type=str, help="Model configuration (yaml)")
     train.add_argument("--data", type=str, help="Dataset configuration")
@@ -29,7 +28,6 @@ def main():
     train.add_argument("--imgsz", type=int, default=640)
     train.add_argument("--device", type=str, default="0")
 
-    # PREDICT
     predict = subparsers.add_parser("predict", help="Run inference")
     predict.add_argument("source", type=str, help="Input source (image/dir/video/stream)")
     predict.add_argument("--model", type=str, required=True, help="Path to weights (.pt)")
@@ -38,20 +36,17 @@ def main():
     predict.add_argument("--stream", action="store_true")
     predict.add_argument("--save", action="store_true")
 
-    # VAL
     val = subparsers.add_parser("val", help="Validate a model")
     val.add_argument("--model", type=str, required=True, help="Path to weights (.pt)")
     val.add_argument("--data", type=str, help="Dataset configuration")
     val.add_argument("--imgsz", type=int, default=640)
 
-    # EXPORT
     export = subparsers.add_parser("export", help="Export a model")
     export.add_argument("--model", type=str, required=True, help="Path to weights (.pt)")
     export.add_argument("--format", type=str, default="onnx", help="Export format (onnx, engine)")
     export.add_argument("--imgsz", type=int, default=640)
     export.add_argument("--dynamic", action="store_true")
 
-    # BENCHMARK
     benchmark = subparsers.add_parser("benchmark", help="Benchmark performance")
     benchmark.add_argument("--model", type=str, required=True)
     benchmark.add_argument("--imgsz", type=int, default=640)
@@ -83,7 +78,6 @@ def main():
             )
             if args.stream:
                 for r in results:
-                    # In stream mode, results is a generator of lists
                     for res in r:
                         console.print(f"[green]✔[/green] Processed {res.path}")
             else:

@@ -16,7 +16,6 @@ class FocalLoss(nn.Module):
         self.alpha = torch.tensor(alpha)
 
     def forward(self, pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
-        # Clamp label to [0, 1] for BCE stability
         label = torch.clamp(label, 0.0, 1.0)
         loss = F.binary_cross_entropy_with_logits(pred, label, reduction="none")
         pred_prob = pred.sigmoid()
@@ -65,16 +64,14 @@ class HeatmapLoss(nn.Module):
             gt_heatmaps = F.interpolate(gt_heatmaps, pred_logits.shape[-2:], mode='bilinear', align_corners=False)
 
         probs = torch.sigmoid(pred_logits)
-        # Per-sample MSE
         mse_loss = F.mse_loss(probs, gt_heatmaps, reduction='none').mean(dim=(1, 2, 3))
 
         inter = (probs * gt_heatmaps).sum(dim=(2, 3))
         union = probs.sum(dim=(2, 3)) + gt_heatmaps.sum(dim=(2, 3))
-        # Prevent DICE division by zero or NaN propagation
         inter = torch.nan_to_num(inter)
         union = torch.nan_to_num(union)
         dice = (1 - (2. * inter + 1e-6) / (union + 1e-6)).squeeze(-1)
-        dice = torch.nan_to_num(dice, nan=1.0, posinf=1.0, neginf=1.0) # Max dice loss if invalid
+        dice = torch.nan_to_num(dice, nan=1.0, posinf=1.0, neginf=1.0)
 
         return 10.0 * mse_loss + self.dice_weight * dice
 
@@ -103,17 +100,13 @@ class BboxLoss(nn.Module):
 
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask, imgsz, stride_tensor):
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        # IoU Loss
         iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
-        # Prevent IoU NaN
         iou = torch.nan_to_num(iou, nan=0.0, posinf=1.0, neginf=0.0).clamp(0, 1.0)
         loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
 
-        # DFL Loss
         if self.use_dfl:
             target_ltrb = bbox2dist(anchor_points, target_bboxes, self.reg_max)
             loss_dfl = self._df_loss(pred_dist[fg_mask].view(-1, self.reg_max + 1), target_ltrb[fg_mask]) * weight
-            # Prevent DFL NaN
             loss_dfl = torch.nan_to_num(loss_dfl, nan=0.0, posinf=0.0, neginf=0.0)
             loss_dfl = loss_dfl.sum() / target_scores_sum
         else:
@@ -130,7 +123,7 @@ class BboxLoss(nn.Module):
                 F.cross_entropy(pred_dist, tr.view(-1), reduction="none").view(tl.shape) * wr).mean(-1, keepdim=True)
 
 class DetectionLoss:
-    def __init__(self, model):
+    def __init__(self, model, config=None):
         device = next(model.parameters()).device
         h = model.heads['detect']
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -143,6 +136,16 @@ class DetectionLoss:
         self.bbox_loss = BboxLoss(self.reg_max - 1, use_dfl=self.use_dfl).to(device)
         self.proj = torch.arange(self.reg_max, dtype=torch.float, device=device)
 
+        if config is None:
+            from neuro_pilot.cfg.schema import AppConfig
+            loss_cfg = AppConfig().loss
+        else:
+            loss_cfg = getattr(config, 'loss', config)
+
+        self.box_weight = getattr(loss_cfg, 'box', 7.5)
+        self.cls_weight = getattr(loss_cfg, 'cls_det', 0.5)
+        self.dfl_weight = getattr(loss_cfg, 'dfl', 1.5)
+
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
         nl, ne = targets.shape
         if nl == 0: return torch.zeros(batch_size, 0, ne - 1, device=self.device)
@@ -153,7 +156,6 @@ class DetectionLoss:
             matches = i == j
             if n := matches.sum(): out[j, :n] = targets[matches, 1:]
 
-        # Prevent scaling overflows
         out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
         out = torch.nan_to_num(out, nan=0.0, posinf=320.0, neginf=-320.0)
         return out
@@ -203,7 +205,6 @@ class DetectionLoss:
 
         target_scores_sum = max(target_scores.sum(), 1)
 
-        # Prevent BCE NaN
         loss_cls = self.bce(pred_scores, target_scores.to(pred_scores.dtype)).sum() / target_scores_sum
         loss[1] = torch.nan_to_num(loss_cls, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -211,7 +212,9 @@ class DetectionLoss:
             loss[0], loss[2] = self.bbox_loss(pred_distri, pred_bboxes, anchor_points, target_bboxes / stride_tensor,
                                             target_scores, target_scores_sum, fg_mask, imgsz, stride_tensor)
 
-        loss[0] *= 7.5; loss[1] *= 0.5; loss[2] *= 1.5
+        loss[0] *= self.box_weight
+        loss[1] *= self.cls_weight
+        loss[2] *= self.dfl_weight
         return loss, loss.detach()
 
 class FDATLoss(nn.Module):
@@ -309,15 +312,12 @@ class FDATLoss(nn.Module):
         sl1_d = F.smooth_l1_loss(e_d, torch.zeros_like(e_d), reduction="none", beta=0.1)
         sl1_s = F.smooth_l1_loss(e_s, torch.zeros_like(e_s), reduction="none", beta=0.1)
 
-        # Lane-following mode
         l_lane = ((self.alpha_lane * sl1_d + self.beta_lane * sl1_s) * w).mean(dim=-1)
 
-        # Intersection mode + endpoint anchor
         l_inter = ((self.alpha_inter * sl1_d + self.beta_inter * sl1_s) * w).mean(dim=-1)
         l_endpoint = (pred_wp[:, -1] - gt_wp[:, -1]).pow(2).sum(dim=-1)
         l_inter = l_inter + self.lambda_endpoint * l_endpoint
 
-        # Gate-conditioned blending
         if gate_score is not None:
             g = gate_score.detach().view(B)
         else:
@@ -329,7 +329,6 @@ class FDATLoss(nn.Module):
 
         return l_frenet + self.lambda_heading * l_heading + self.lambda_smooth * l_smooth
 
-
 class CombinedLoss(nn.Module):
     """Multi-task loss with uncertainty-aware weighting."""
     def __init__(self, config, model, device=None):
@@ -337,7 +336,7 @@ class CombinedLoss(nn.Module):
         self.device = device or next(model.parameters()).device
         self.heatmap_loss = HeatmapLoss(device=self.device)
         self.traj_loss = nn.SmoothL1Loss(reduction='none', beta=0.1)
-        self.det_loss = DetectionLoss(model)
+        self.det_loss = DetectionLoss(model, config)
         self.ce_cls = nn.CrossEntropyLoss()
 
         self.log_var_heatmap = nn.Parameter(torch.zeros(1, device=self.device))
@@ -353,7 +352,6 @@ class CombinedLoss(nn.Module):
         self.lambda_smooth = getattr(loss_cfg, 'lambda_smooth', 0.1)
         self.lambda_gate = getattr(loss_cfg, 'lambda_gate', 0.5)
 
-        # FDAT Loss (opt-in via config)
         self.use_fdat = getattr(loss_cfg, 'use_fdat', False)
         self.use_uncertainty = getattr(loss_cfg, 'use_uncertainty', True)
         if self.use_fdat:
@@ -374,8 +372,6 @@ class CombinedLoss(nn.Module):
         if lambda_val == 0: return torch.tensor(0.0, device=loss.device)
         if not self.use_uncertainty:
              return loss * lambda_val
-        # Clamp log_var to prevent precision explosion
-        # Range [-2, 2] bounds precision to [0.135, 7.389]
         clamped_log_var = torch.clamp(log_var, -2.0, 2.0)
         precision = torch.exp(-clamped_log_var)
         return precision * (loss * lambda_val) + clamped_log_var
@@ -406,7 +402,6 @@ class CombinedLoss(nn.Module):
             if self.use_fdat:
                 gate = predictions.get('gate_score')
                 l_traj_raw = self.fdat_loss(pred_wp, gt_wp, gate)
-                # FDAT includes smoothness internally — l_smooth stays 0
             else:
                 l_traj_raw = self.traj_loss(pred_wp, gt_wp).mean(dim=(1, 2))
                 diff = pred_wp[:, 1:] - pred_wp[:, :-1]
@@ -419,89 +414,64 @@ class CombinedLoss(nn.Module):
             if gt_cls.dim() > 1: gt_cls = gt_cls.argmax(dim=-1)
             l_cls_raw = self.ce_cls(pred_cls, gt_cls.long())
 
+        batch_size = gt_wp.shape[0] if gt_wp is not None else 1
+
         l_gate = torch.tensor(0.0, device=self.device)
         if 'gate_score' in predictions:
             pred_gate = predictions['gate_score']
             if gt_cls is not None:
                  gt_gate = (gt_cls != 0).to(pred_gate.dtype).view(-1, 1, 1)
-                 # Cast to float32 and disable autocast to bypass AMP safety errors
                  with torch.amp.autocast(device_type=self.device.type if hasattr(self.device, 'type') else 'cuda', enabled=False):
-                     # Crucial: Clamp BOTH input and target for F.binary_cross_entropy
                      p_gate = torch.clamp(torch.nan_to_num(pred_gate.float(), nan=0.0), 0.0, 1.0)
                      t_gate = torch.clamp(torch.nan_to_num(gt_gate.float(), nan=0.0), 0.0, 1.0)
-                     l_gate = F.binary_cross_entropy(p_gate, t_gate)
+                     l_gate = F.binary_cross_entropy(p_gate, t_gate, reduction='none').view(batch_size)
             else:
-                 l_gate = pred_gate.mean()
+                 l_gate = pred_gate.mean(dim=(1, 2))
 
-        # Apply Waypoints Mask to relevant losses
-        batch_size = gt_wp.shape[0] if gt_wp is not None else 1
         wp_mask = targets.get('waypoints_mask', torch.ones(batch_size, device=self.device))
 
-        # ==========================================
-        # TRAJECTORY QUALITY FOCAL LOSS (TQFL)
-        # ==========================================
         l_traj_exist = torch.tensor(0.0, device=self.device)
         predict_traj_exist = False
         if pred_wp is not None and isinstance(predictions.get('trajectory'), dict):
             has_traj_logit = predictions['trajectory'].get('has_traj_logit')
             if has_traj_logit is not None:
                 with torch.no_grad():
-                    # alpha controls the decay rate of the target.
                     alpha_tqfl = 5.0
-
-                    # Ensure l_traj_raw is 1D per batch item before reduction
                     if l_traj_raw.dim() == 0:
                         batch_err = l_traj_raw.detach().unsqueeze(0).expand(batch_size)
                     else:
                         batch_err = l_traj_raw.detach()
 
-                    # Trajectory Quality Focal Target:
-                    # mask * exp(-alpha * error) -> Quality Target [0, 1]
                     target_exist = wp_mask * torch.exp(-alpha_tqfl * batch_err)
                     target_exist = torch.nan_to_num(target_exist, nan=0.0)
                     target_exist = torch.clamp(target_exist, 0.0, 1.0)
 
-                # Use BCEWithLogitsLoss to train the existence pred against the soft quality target
                 l_traj_exist = F.binary_cross_entropy_with_logits(
                     has_traj_logit.squeeze(-1),
-                    target_exist.to(has_traj_logit.dtype)
+                    target_exist.to(has_traj_logit.dtype),
+                    reduction='mean'
                 )
                 predict_traj_exist = True
 
-        # Determine scaling for the existence loss
         lambda_traj_exist = self.lambda_traj * 0.5
 
-        # Average only over valid samples (Reduction)
         if wp_mask.any():
             l_heat_raw = (l_heat_raw * wp_mask).sum() / (wp_mask.sum() + 1e-6)
             l_traj_raw = (l_traj_raw * wp_mask).sum() / (wp_mask.sum() + 1e-6)
             l_smooth = (l_smooth * wp_mask).sum() / (wp_mask.sum() + 1e-6)
-            l_gate = (l_gate * wp_mask).sum() / (wp_mask.sum() + 1e-6) # Apply mask to l_gate
+            l_gate = (l_gate * wp_mask).sum() / (wp_mask.sum() + 1e-6)
         else:
             l_heat_raw = l_heat_raw.mean() * 0.0
             l_traj_raw = l_traj_raw.mean() * 0.0
             l_smooth = l_smooth.mean() * 0.0
-            l_gate = l_gate.mean() * 0.0 # Apply mask to l_gate
+            l_gate = l_gate.mean() * 0.0
 
-        # ==========================================
-        # PERCEPTION-GATED PLANNING (PGP) LOSS
-        # ==========================================
-        # If the model is "blind" (Detection loss is high), suppress the Trajectory gradient
-        # so it doesn't overfit to noisy/corrupted perception features.
-
-        # Hyperparameters for PGP (can be moved to config later)
-        # Assuming det_loss ranges ~[0.5, 5.0] during standard YOLO training
-        # Target loss implies "competent perception"
-        det_loss_target = 5.0
-        beta = 0.5 # Steepness of the gate transition
-
-        # Calculate gating factor in range [0.5, 1.0] for more aggressive early learning
         with torch.no_grad():
-            # If l_det_raw is high, gating factor approaches 0.5 (instead of 0.1)
+            beta = 0.5
+            det_loss_target = 5.0
             pgp_gate = torch.exp(-beta * torch.relu(l_det_raw - det_loss_target))
             pgp_gate = torch.clamp(pgp_gate, min=0.5)
 
-        # Scale planning losses by the PGP gate
         gated_l_traj_raw = l_traj_raw * pgp_gate
         gated_l_heat_raw = l_heat_raw * pgp_gate
 

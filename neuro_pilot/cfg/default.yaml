@@ -3,12 +3,16 @@
 # Aligned with Ultralytics standards (Architecture vs. Training separation).
 
 loss:
-  lambda_det: 2.5     # Detection loss multiplier (from debug script)
-  lambda_traj: 7.5   # Trajectory loss multiplier (from debug script)
-  lambda_heatmap: 10.0 # Heatmap loss multiplier (from debug script)
+  lambda_det: 1.0     # Reduced from 2.5 to avoid double-weighting (standard YOLOv8 scales already applied in head)
+  lambda_traj: 2.0   # Reduced from 7.5 to align with other task magnitudes
+  lambda_heatmap: 1.0 # Reduced from 10.0 to prevent heatmap dominance
   lambda_smooth: 0.1  # Smoothness loss multiplier
-  lambda_cls: 1.0     # Classification loss multiplier (from debug script)
+  lambda_cls: 1.0     # Classification loss multiplier
   lambda_gate: 0.5    # Command gating loss multiplier
+  # Detection Head Component Loss Multipliers
+  box: 7.5            # Box IoU loss multiplier
+  cls_det: 0.5        # Box Classification loss multiplier
+  dfl: 1.5            # Box Distribution Focal Loss multiplier
   use_uncertainty: True # Multi-task uncertainty weighting
   # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
   use_fdat: True             # Toggle: False = SmoothL1 (default), True = FDAT

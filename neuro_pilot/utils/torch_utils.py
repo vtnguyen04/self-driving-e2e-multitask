@@ -14,7 +14,6 @@ def select_device(device="", verbose=True):
     if isinstance(device, torch.device):
         return device
 
-    # Simple selection logic
     s = str(device).lower()
     if s == 'cpu':
         return torch.device('cpu')
@@ -39,12 +38,20 @@ def save_checkpoint(state, is_best, filename='checkpoint.pt', save_dir='weights'
     save_path.mkdir(parents=True, exist_ok=True)
     filepath = save_path / filename
 
-    # Metadata is usually already in 'state' if called from Trainer.save_checkpoint
-    torch.save(state, filepath)
+    try:
+        torch.save(state, filepath)
+    except Exception as e:
+        logger.error(f"FAILED to save checkpoint to {filepath}: {e}")
+        return
+
     if is_best:
         best_path = save_path / filename.replace('last', 'best') if 'last' in filename else save_path / 'best.pt'
         import shutil
-        shutil.copyfile(filepath, best_path)
+        try:
+            shutil.copyfile(filepath, best_path)
+        except Exception as e:
+            logger.error(f"FAILED to copy best model to {best_path}: {e}")
+
 
 def load_checkpoint(filepath, model, optimizer=None, scaler=None):
     """Load checkpoint and restore state for training resume."""
@@ -61,9 +68,9 @@ def load_checkpoint(filepath, model, optimizer=None, scaler=None):
         scaler.load_state_dict(checkpoint['scaler'])
 
     epoch = checkpoint.get('epoch', 0)
-    best_loss = checkpoint.get('best_loss', float('inf'))
+    fitness = checkpoint.get('fitness', 0.0)
 
-    logger.info(f"Loaded checkpoint from epoch {epoch} (best_loss={best_loss:.4f})")
+    logger.info(f"Loaded checkpoint from epoch {epoch} (fitness={fitness:.4f})")
 
     return checkpoint
 
@@ -73,7 +80,6 @@ def find_latest_checkpoint(experiment_name: str) -> Path | None:
     if not ckpt_dir.exists():
         return None
 
-    # New structure: weights/last.pt
     weights_dir = ckpt_dir / "weights"
     if weights_dir.exists():
         last = weights_dir / "last.pt"
@@ -83,7 +89,6 @@ def find_latest_checkpoint(experiment_name: str) -> Path | None:
         if best.exists():
             return best
 
-    # Legacy structure
     latest = ckpt_dir / "latest.pth"
     if latest.exists():
         return latest
@@ -107,12 +112,10 @@ def fuse_conv_and_bn(conv, bn):
         bias=True,
     ).requires_grad_(False).to(conv.weight.device)
 
-    # Prepare filters
     w_conv = conv.weight.clone().view(conv.out_channels, -1)
     w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
     fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
 
-    # Prepare spatial bias
     b_conv = torch.zeros(conv.weight.size(0), device=conv.weight.device) if conv.bias is None else conv.bias
     b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
     fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
@@ -135,28 +138,25 @@ class ModelEMA:
     For exponential moving average (EMA) of model weights.
     """
     def __init__(self, model, decay=0.9999, tau=2000, updates=0):
-        # Create EMA
         from copy import deepcopy
-        self.ema = deepcopy(model).eval()  # FP32 EMA
-        self.updates = updates  # number of EMA updates
-        self.decay = lambda x: decay * (1 - math.exp(-x / tau))  # decay exponential ramp (to help early training)
+        self.ema = deepcopy(model).eval()
+        self.updates = updates
+        self.decay = lambda x: decay * (1 - math.exp(-x / tau))
         for p in self.ema.parameters():
             p.requires_grad_(False)
 
     def update(self, model):
-        # Update EMA parameters
         with torch.no_grad():
             self.updates += 1
             d = self.decay(self.updates)
 
-            msd = model.state_dict()  # model state_dict
+            msd = model.state_dict()
             for k, v in self.ema.state_dict().items():
                 if v.dtype.is_floating_point:
                     v *= d
                     v += (1 - d) * msd[k].detach()
 
     def update_attr(self, model, include=(), exclude=('process_group', 'reducer')):
-        # Update EMA attributes
         for k, v in model.__dict__.items():
             if (len(include) and k not in include) or k in exclude or k.startswith('_'):
                 continue

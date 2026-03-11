@@ -12,8 +12,6 @@ class Exporter:
     def __init__(self, cfg, model, device):
         self.cfg = cfg
         self.model = model
-        # Unwrap NeuroPilot wrapper to get DetectionModel, but don't
-        # unwrap DetectionModel itself (its self.model is nn.Sequential)
         from neuro_pilot.engine.model import NeuroPilot
         if isinstance(model, NeuroPilot) and hasattr(model, 'model'):
             self.model = model.model
@@ -43,13 +41,11 @@ class Exporter:
         output_path = kwargs.get('file', "neuro_pilot_model.onnx")
         skip_heatmap = kwargs.get('skip_heatmap', False)
 
-        # Prepare Dummy Input
         im = torch.zeros(1, 3, *imgsz).to(self.device).float()
         cmd = torch.zeros(1, 4).to(self.device).float()
 
         self.model.eval()
 
-        # Wrap model for export (dict → ordered tuple for ONNX)
         class ExportAdapter(nn.Module):
             """Flattens NeuroPilot dict outputs into ordered tuple for ONNX export."""
             def __init__(self, model, skip_heatmap=False):
@@ -58,24 +54,20 @@ class Exporter:
                 self.skip_heatmap = skip_heatmap
 
             def forward(self, x, cmd):
-                # Pass cmd positionally — DetectionModel.forward extracts args[1] as cmd
                 out = self.model(x, cmd)
 
                 B, _, H_in, W_in = x.shape
                 device = x.device
 
                 if isinstance(out, dict):
-                    # Detection: 'bboxes' = [B, 4+nc, N] (decoded xywh + sigmoid scores)
                     bboxes = out.get('bboxes')
                     if bboxes is None:
                         bboxes = torch.zeros(B, 18, 0, device=device)
 
-                    # Trajectory: 'waypoints' = [B, T, 2] normalized [-1, 1]
                     waypoints = out.get('waypoints')
                     if waypoints is None:
                         waypoints = torch.zeros(B, 10, 2, device=device)
 
-                    # Heatmap: 'heatmap' = [B, 1, H, W]
                     if not self.skip_heatmap:
                         hm = out.get('heatmap')
                         if isinstance(hm, dict):
@@ -85,20 +77,17 @@ class Exporter:
                     else:
                         hm = torch.zeros(B, 1, 1, 1, device=device)
 
-                    # Classification (command prediction): 'classes' = [B, nc]
                     classes = out.get('classes')
                     if classes is None:
                         classes = torch.zeros(B, 4, device=device)
 
                     return bboxes, waypoints, hm, classes
 
-                # Fallback for non-dict outputs
                 return out
 
         model_wrapper = ExportAdapter(self.model, skip_heatmap=skip_heatmap).to(self.device)
         model_wrapper.eval()
 
-        # Define output names and dynamic axes
         output_names = ['bboxes', 'trajectory', 'heatmap', 'classes']
         dynamic_axes = None
         if kwargs.get('dynamic', False):
@@ -108,7 +97,6 @@ class Exporter:
                 'heatmap': {0: 'batch'}, 'classes': {0: 'batch'},
             }
 
-        # Export
         logger.info(f"Exporting ONNX: imgsz={imgsz}, opset={opset}, skip_heatmap={skip_heatmap}")
         torch.onnx.export(
             model_wrapper,
@@ -122,7 +110,6 @@ class Exporter:
             dynamic_axes=dynamic_axes,
         )
 
-        # Simplify
         if simplify:
             try:
                 from onnxsim import simplify as onnx_simplify
@@ -134,7 +121,6 @@ class Exporter:
             except ImportError:
                 logger.warning("onnx-simplifier not found. Skipping simplification.")
 
-        # Embed Metadata
         try:
             model_onnx = onnx.load(output_path)
             for key, value in {

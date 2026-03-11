@@ -12,7 +12,6 @@ class PyTorchBackend(BaseBackend):
     def __init__(self, weights: Union[str, nn.Module], device: torch.device, fp16: bool = False, fuse: bool = False):
         super().__init__(weights, device, fp16)
 
-        # Load Model
         if isinstance(weights, nn.Module):
             self.model = weights
         else:

@@ -17,8 +17,8 @@ class BaseModel(nn.Module):
 
     def info(self, verbose=True, img_size=224):
         """Print model information."""
-        n_p = sum(x.numel() for x in self.parameters()) # number parameters
-        n_g = sum(x.numel() for x in self.parameters() if x.requires_grad) # number gradients
+        n_p = sum(x.numel() for x in self.parameters())
+        n_g = sum(x.numel() for x in self.parameters() if x.requires_grad)
         if verbose:
             logger.info(f"Model Summary: {len(list(self.modules()))} layers, {n_p} parameters, {n_g} gradients")
         return n_p, n_g
@@ -31,7 +31,7 @@ class BaseModel(nn.Module):
                 m.conv = fuse_conv_and_bn(m.conv, m.bn)
                 delattr(m, 'bn')
                 m.forward = m.forward_fuse
-            if hasattr(m, 'fuse_convs'): # For RepConv or Conv2
+            if hasattr(m, 'fuse_convs'):
                 m.fuse_convs()
         return self
 
@@ -45,21 +45,16 @@ def fuse_conv_and_bn(conv, bn):
                           groups=conv.groups,
                           bias=True).requires_grad_(False).to(conv.weight.device)
 
-    # Prepare filters
     w_conv = conv.weight.clone().view(conv.out_channels, -1)
     w_bn = bn.weight.div(torch.sqrt(bn.running_var + bn.eps))
 
     fusedconv.weight.copy_(torch.mm(w_bn.diag(), w_conv).view(fusedconv.weight.shape))
 
-    # Prepare spatial bias
     b_conv = torch.zeros(conv.weight.size(0), device=conv.weight.device) if conv.bias is None else conv.bias
     b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
     fusedconv.bias.copy_(b_conv + b_bn)
 
     return fusedconv
 
-# Import Conv properly to support isinstance check in fuse()
 from neuro_pilot.nn.modules import Conv
 
-# Monkey patch forward_fuse to Conv class in common if possible, or redefine Conv here?
-# Better to have it in common.py. For now we skip actual fusion logic or updated common.

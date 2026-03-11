@@ -14,7 +14,7 @@ class BaseBackend(ABC):
         self.device = device
         self.fp16 = fp16
         self.warmup_done = False
-        self.names = {i: f"class_{i}" for i in range(14)} # Default 14 classes
+        self.names = {i: f"class_{i}" for i in range(14)}
 
     @abstractmethod
     def forward(self, im: Union[torch.Tensor, np.ndarray], **kwargs) -> Union[torch.Tensor, List[torch.Tensor]]:

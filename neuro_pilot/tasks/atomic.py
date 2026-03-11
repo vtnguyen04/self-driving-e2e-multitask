@@ -5,16 +5,13 @@ from neuro_pilot.nn.modules import TrajectoryHead
 @TaskRegistry.register("trajectory")
 class TrajectoryTask(BaseTask):
     def build_model(self) -> nn.Module:
-        # If backbone provided, return Head
         if self.backbone:
-            # Assuming neck_dim (128) is the output of the backbone/neck passed to the head
             self.model = TrajectoryHead(c1=128, num_waypoints=self.cfg.head.num_waypoints)
             return self.model
         else:
             raise NotImplementedError("Standalone TrajectoryTask not yet supported (needs backbone)")
 
     def build_criterion(self) -> nn.Module:
-        # Atomic Trajectory Loss
         from neuro_pilot.utils.losses import TrajectoryLossAtomic
         return TrajectoryLossAtomic(self.cfg)
 
@@ -27,9 +24,7 @@ class TrajectoryTask(BaseTask):
 class HeatmapTask(BaseTask):
     def build_model(self) -> nn.Module:
         if self.backbone:
-             c2 = getattr(self.backbone, 'c2_dim', 512) # fallback to common resnet dim
-             # HeatmapHead expects [p3, c2], so c1 should be a list/tuple of [p3_dim, c2_dim]
-             # Assuming neck_dim (128) for p3 and c2 from backbone
+             c2 = getattr(self.backbone, 'c2_dim', 512)
              self.model = HeatmapHead(c1=[128, c2], ch_out=1)
              return self.model
         raise NotImplementedError
@@ -40,9 +35,6 @@ class HeatmapTask(BaseTask):
 
     def get_trainer(self): pass
     def get_validator(self):
-        # Heatmap usually just logs loss, but we could add Dice/IoU if needed.
-        # For now, let's return None or a dummy metric
         return None
 
-# Helper imports
 from neuro_pilot.nn.modules import HeatmapHead

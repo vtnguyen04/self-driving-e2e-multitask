@@ -38,7 +38,7 @@ class LoadImages:
         self.cap = None
         self.q = Queue(maxsize=32)
         self.stop = False
-        self.frame = 0 # Added missing frame counter
+        self.frame = 0
 
         if nv > 0:
             self._new_video(str(videos[0]))
@@ -53,7 +53,6 @@ class LoadImages:
         path = self.files[self.count]
 
         if self.video_flag[self.count]:
-            # Read video from queue
             self.mode = 'video'
             if self.q.empty() and self.stop:
                 self.count += 1
@@ -62,9 +61,8 @@ class LoadImages:
                 path = self.files[self.count]
                 self._new_video(str(path))
 
-            # Blocking get
             data = self.q.get()
-            if data is None: # End of video signal
+            if data is None:
                 self.count += 1
                 if self.count == self.nf:
                     raise StopIteration
@@ -75,7 +73,6 @@ class LoadImages:
             img, img0 = data
             self.frame += 1
         else:
-            # Read image
             self.count += 1
             img0 = cv2.imread(str(path))
             if img0 is None:
@@ -88,13 +85,12 @@ class LoadImages:
         if self.cap:
             self.stop = True
             self.cap.release()
-            while not self.q.empty(): self.q.get() # Clear queue
+            while not self.q.empty(): self.q.get()
 
         self.frame = 0
         self.cap = cv2.VideoCapture(path)
         self.frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.stop = False
-        # Start background thread
         threading.Thread(target=self._update, args=(self.cap,), daemon=True).start()
 
     def _update(self, cap):
@@ -111,24 +107,22 @@ class LoadImages:
                     if frame_idx % self.vid_stride != 0:
                         continue
 
-                    # Preprocess in background thread
                     data = lb({'img': img0})
                     img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
                     img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
                     self.q.put((img, img0))
                 else:
                     self.stop = True
-                    self.q.put(None) # Signal end
+                    self.q.put(None)
                     break
             else:
-                time.sleep(0.005) # Small sleep to avoid CPU spinning
+                time.sleep(0.005)
 
     def preprocess(self, img0):
         from neuro_pilot.data.augment import LetterBox
         lb = LetterBox(new_shape=self.imgsz, auto=self.auto, scaleup=True)
         data = lb({'img': img0})
         img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
-        # Return as uint8 to save 4x CPU-GPU bandwidth. Normalization moved to Predictor (GPU).
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
         return img
 
@@ -157,7 +151,6 @@ class LoadStreams:
         self.imgs = [None] * n
         self.sources = [x for x in sources]
         for i, s in enumerate(sources):
-            # Start thread
             st = f"Stream {i}: {s}"
             self.caps[i] = cv2.VideoCapture(s)
             if not self.caps[i].isOpened():
@@ -168,7 +161,6 @@ class LoadStreams:
             self.frames[i] = max(int(self.caps[i].get(cv2.CAP_PROP_FRAME_COUNT)), 0) or float('inf')
             self.fps[i] = max((fps if np.isfinite(fps) else 0) or 30, 0)
 
-            # Non-threaded simple read for now to keep it robust
             success, self.imgs[i] = self.caps[i].read()
             if not success:
                 raise ConnectionError(f"Failed to read from {st}")
@@ -188,7 +180,6 @@ class LoadStreams:
                     cap.grab()
             success, img0 = cap.read()
             if not success:
-                 # End of stream or error
                  raise StopIteration
 
             img = self.preprocess(img0)
@@ -201,7 +192,6 @@ class LoadStreams:
         lb = LetterBox(new_shape=self.imgsz, auto=self.auto, scaleup=True)
         data = lb({'img': img0})
         img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
-        # Return as uint8 to save 4x CPU-GPU bandwidth. Normalization moved to Predictor (GPU).
         img = torch.from_numpy(img).permute(2, 0, 1).contiguous()
         return img
 
@@ -239,7 +229,6 @@ class LoadTensors:
         img0 = self.orig[self.count] if isinstance(self.orig, (list, np.ndarray, torch.Tensor)) and len(self.orig) > self.count else None
         self.count += 1
 
-        # Resize if needed
         if img.shape[-1] != self.imgsz or img.shape[-2] != self.imgsz:
              import torch.nn.functional as F
              if img.ndim == 3:

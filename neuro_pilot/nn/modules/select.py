@@ -10,5 +10,4 @@ class SelectFeature(nn.Module):
         self.index = index
 
     def forward(self, x):
-        # x should be a list, tuple or dict
         return x[self.index]

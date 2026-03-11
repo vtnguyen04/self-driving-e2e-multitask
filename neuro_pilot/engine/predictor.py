@@ -11,7 +11,7 @@ class BasePredictor:
     """
     def __init__(self, cfg, model, device):
         self.cfg = cfg
-        self.model = model # This should be the Backend (AutoBackend/PyTorchBackend)
+        self.model = model
         self.device = device
         from .callbacks import CallbackList
         self.callbacks = CallbackList()
@@ -40,14 +40,13 @@ class Predictor(BasePredictor):
     def predict(self, source, stream=False, **kwargs):
         """Perform inference on source. If stream=True, returns a generator."""
         imgsz = kwargs.get('imgsz', getattr(self.cfg.data, 'image_size', 640))
-        auto = kwargs.get('auto', True) # Default to True for better aspect ratio
+        auto = kwargs.get('auto', True)
         from .loaders import get_dataloader
         dataset = get_dataloader(source, imgsz=imgsz, auto=auto)
 
         self.callbacks.on_predict_start(self)
 
         def generator():
-            # print(f"DEBUG: generator started for dataloader type: {type(dataset)}")
             for data in dataset:
                 if len(data) == 5:
                     path, img, img0, cap, frame_index = data
@@ -55,12 +54,10 @@ class Predictor(BasePredictor):
                     path, img, img0, cap = data
                     frame_index = 0
                 yield self._predict_batch(img, img0, path, frame_index=frame_index, **kwargs)
-            # print("DEBUG: generator reached end of dataset.")
 
         if stream:
             return generator()
 
-        # Collect all results if not streaming
         all_results = []
         for results in generator():
             all_results.extend(results)
@@ -72,18 +69,15 @@ class Predictor(BasePredictor):
         """Internal single-batch prediction logic."""
         self.callbacks.on_predict_batch_start(self)
 
-        # Batch Preparation
         if img.ndim == 3:
             img = img.unsqueeze(0)
 
         half = kwargs.get('half', False)
         if img.dtype == torch.uint8:
-            # High-performance path: Move uint8 to GPU, then normalize on GPU
             img = img.to(self.device)
             img = img.half() if half else img.float()
             img /= 255.0
 
-            # Standard ImageNet Normalization on GPU
             mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
             std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
             if half:
@@ -92,17 +86,15 @@ class Predictor(BasePredictor):
         else:
             img = img.to(self.device).half() if half else img.to(self.device).float()
 
-        # Command handling
         command = kwargs.get('command') or kwargs.get('cmd')
         timeline = kwargs.get('timeline') or kwargs.get('command_timeline')
         if timeline:
-            if isinstance(timeline, (str, Path)): # Path to JSON
+            if isinstance(timeline, (str, Path)):
                 import json
                 with open(timeline) as f:
                     timeline = json.load(f)
-                kwargs['timeline'] = timeline # Cache it
+                kwargs['timeline'] = timeline
 
-            # Lookup segment
             for seg in timeline:
                 if seg['start'] <= frame_index <= seg['end']:
                     command = seg['command']
@@ -110,17 +102,13 @@ class Predictor(BasePredictor):
 
         cmd = self._prepare_command(command, img.shape[0], half)
 
-        # Inference
         with torch.no_grad():
             preds = self.model(img, cmd=cmd)
 
-        # BBoxes (NMS + Scaling)
         bboxes = self._handle_bboxes(preds, img.shape[2:], img0, **kwargs)
 
-        # Waypoints Scaling
         waypoints = self._handle_waypoints(preds.get('waypoints'), img.shape[2:], img0)
 
-        # Results Generation
         results = self.postprocess(preds, img0, [path] if isinstance(path, str) else path, bboxes=bboxes, waypoints=waypoints, command=command)
 
         self.callbacks.on_predict_batch_end(self)
@@ -136,10 +124,9 @@ class Predictor(BasePredictor):
         if cmd.ndim == 0:
              cmd = cmd.unsqueeze(0)
         if cmd.ndim == 1 and cmd.shape[0] != batch_size:
-             # Assume it's a single index or one-hot and needs batching
              if cmd.shape[0] == 1:
                   cmd = cmd.repeat(batch_size)
-             elif cmd.shape[0] == 4: # One-hot
+             elif cmd.shape[0] == 4:
                   cmd = cmd.unsqueeze(0).repeat(batch_size, 1)
 
         if half and cmd.is_floating_point():
@@ -167,7 +154,6 @@ class Predictor(BasePredictor):
             nc=nc
         )
 
-        # Scale boxes to orig shape
         for j, det in enumerate(bboxes):
             if len(det):
                 orig_shape = self._get_orig_shape(img0, j, input_shape)
@@ -199,8 +185,6 @@ class Predictor(BasePredictor):
         for i in range(len(imgs_list)):
             img_i = imgs_list[i]
             if isinstance(img_i, np.ndarray) and img_i.shape[-1] == 3:
-                # Ensure it's RGB for Results. Results.plot then treats it as RGB.
-                # From LoadImages, img0 is BGR.
                 img_i = cv2.cvtColor(img_i, cv2.COLOR_BGR2RGB)
 
             res = Results(
@@ -240,13 +224,11 @@ class Predictor(BasePredictor):
             from pathlib import Path
             img0 = cv2.imread(str(source)) if isinstance(source, (str, Path)) else source
 
-            # Use same LetterBox behavior as dataset
             from neuro_pilot.data.augment import LetterBox
             lb = LetterBox(new_shape=imgsz, auto=True, scaleup=True)
             data = lb({'img': img0})
             img = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
 
-            # High-performance path: Move uint8 to GPU, then normalize on GPU
             img = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0).to(self.device)
             img = img.half() if getattr(self.model, 'fp16', False) else img.float()
             img /= 255.0

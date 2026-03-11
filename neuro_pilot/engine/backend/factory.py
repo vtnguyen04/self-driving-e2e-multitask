@@ -17,18 +17,15 @@ class AutoBackend:
         if device is None:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Handle in-memory Module
         if isinstance(weights, nn.Module):
             return PyTorchBackend(weights, device, fp16, fuse)
 
-        # Handle Paths
         w = Path(weights)
         if not w.exists():
             raise FileNotFoundError(f"Weights file not found: {w}")
 
         suffix = w.suffix.lower()
 
-        # Select Strategy
         if suffix in ['.engine', '.plan']:
             logger.info(f"Detected TensorRT engine: {w}")
             return TensorRTBackend(str(w), device, fp16)
@@ -39,5 +36,4 @@ class AutoBackend:
             logger.info(f"Detected PyTorch checkpoint: {w}")
             return PyTorchBackend(str(w), device, fp16, fuse)
         else:
-             # Default or Error
              raise NotImplementedError(f"Unsupported model format: {suffix}")

@@ -12,7 +12,6 @@ import torch
 from neuro_pilot.utils.logger import logger as LOGGER
 from neuro_pilot.utils.ops import get_bathtub_weights
 
-
 PROJECT = "NeuroPilot AI"
 VERSION = "2.5.0"
 
@@ -46,7 +45,6 @@ def plt_settings():
         return wrapper
     return decorator
 
-# --- CONSTANTS ---
 OKS_SIGMA = (
     np.array(
         [0.26, 0.25, 0.25, 0.35, 0.35, 0.79, 0.79, 0.72, 0.72, 0.62, 0.62, 1.07, 1.07, 0.87, 0.87, 0.89, 0.89],
@@ -56,7 +54,6 @@ OKS_SIGMA = (
 )
 RLE_WEIGHT = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5, 1.0, 1.0, 1.2, 1.2, 1.5, 1.5])
 
-# --- IOU FUNCTIONS ---
 def bbox_ioa(box1: np.ndarray, box2: np.ndarray, iou: bool = False, eps: float = 1e-7) -> np.ndarray:
     b1_x1, b1_y1, b1_x2, b1_y2 = box1.T
     b2_x1, b2_y1, b2_x2, b2_y2 = box2.T
@@ -201,7 +198,6 @@ def batch_probiou(obb1: torch.Tensor | np.ndarray, obb2: torch.Tensor | np.ndarr
 def smooth_bce(eps: float = 0.1) -> tuple[float, float]:
     return 1.0 - 0.5 * eps, 0.5 * eps
 
-# --- METRIC CLASSES ---
 class ConfusionMatrix(DataExportMixin):
     def __init__(self, names: dict[int, str] = {}, task: str = "detect", save_matches: bool = False):
         self.task = task
@@ -433,7 +429,10 @@ def ap_per_class(tp, conf, pred_cls, target_cls, plot=False, on_plot=None, save_
         recall = tpc / (n_l + eps)
         r_curve[ci] = np.interp(-x, -conf[i], recall[:, 0], left=0)
         precision = tpc / (tpc + fpc)
-        p_curve[ci] = np.interp(-x, -conf[i], precision[:, 0], left=1)
+        if tpc[-1, 0] == 0:
+            p_curve[ci] = 0.0
+        else:
+            p_curve[ci] = np.interp(-x, -conf[i], precision[:, 0], left=1)
         for j in range(tp.shape[1]):
             ap[ci, j], mpre, mrec = compute_ap(recall[:, j], precision[:, j])
             if j == 0: prec_values.append(np.interp(x, mrec, mpre))
@@ -532,7 +531,6 @@ class DetMetrics(SimpleClass, DataExportMixin):
 
 from abc import ABC, abstractmethod
 
-# Adapted classes
 def calculate_fitness(metrics: dict, weights: dict = None) -> float:
     """
     Calculate a single fitness score for the multi-task model.
@@ -544,12 +542,10 @@ def calculate_fitness(metrics: dict, weights: dict = None) -> float:
     map_95 = metrics.get('mAP_50-95', 0.0)
     l1 = metrics.get('L1', 1.0)
 
-    # Weights from config
     w_map50 = weights.get('map50', 0.1)
     w_map95 = weights.get('map95', 0.2)
     w_l1 = weights.get('l1', 0.7)
 
-    # Convert L1 error to a 'goodness' score
     l1_score = 1.0 / (1.0 + l1)
 
     return map_50 * w_map50 + map_95 * w_map95 + l1_score * w_l1
@@ -580,16 +576,14 @@ class TrajectoryMetric(BaseMetric):
         pred_wp = preds['waypoints']
         gt_wp = batch['waypoints'].to(pred_wp.device)
 
-        # Interpolation if needed
         if gt_wp.shape[1] != pred_wp.shape[1]:
              gt_wp = torch.nn.functional.interpolate(gt_wp.permute(0,2,1), size=pred_wp.shape[1], mode='linear').permute(0,2,1)
 
         err_abs = (pred_wp - gt_wp).abs()
         l1 = err_abs.mean().item()
 
-        # Weighted L1 (Bathtub)
         T = pred_wp.shape[1]
-        w = get_bathtub_weights(T, self.tau_start, self.tau_end, device=pred_wp.device) # [T]
+        w = get_bathtub_weights(T, self.tau_start, self.tau_end, device=pred_wp.device)
         weighted_l1 = (err_abs.mean(-1) * w).mean().item()
 
         self.total_l1 += l1
@@ -617,7 +611,6 @@ class HeatmapMetric(BaseMetric):
         gt_wp = batch['waypoints'].to(pred_hm.device)
         B, _, H, W = pred_hm.shape
 
-        # We need a generator to create GT heatmap from waypoints for metric calculation
         from neuro_pilot.utils.losses import HeatmapWaypointLoss
         if not hasattr(self, 'generator'):
              self.generator = HeatmapWaypointLoss(device=pred_hm.device)
@@ -639,7 +632,7 @@ class DetectionEvaluator:
         self.device = device
         self.log_dir = Path(log_dir) if log_dir else None
         self.names = names if names is not None else {i: str(i) for i in range(num_classes)}
-        self.stats = [] # list of (tp, conf, pcls, tcls)
+        self.stats = []
         self.iouv = torch.linspace(0.5, 0.95, 10, device=device)
         self.niou = self.iouv.numel()
         self.confusion_matrix = ConfusionMatrix(names=self.names)
@@ -659,14 +652,11 @@ class DetectionEvaluator:
             t_boxes = target['boxes'].to(self.device).float()
             t_cls = target['labels'].to(self.device).float().view(-1)
 
-            # Update Confusion Matrix
-            # CM expects xyxy for boxes, assumes 'boxes' in inputs are xyxy from validator (correct)
             self.confusion_matrix.process_batch(
                 {'bboxes': p_boxes, 'cls': p_cls, 'conf': p_scores},
                 {'bboxes': t_boxes, 'cls': t_cls}
             )
 
-            # Matching for proper mAP calculation
             correct = torch.zeros(p_boxes.shape[0], self.niou, dtype=torch.bool, device=self.device)
             if p_boxes.shape[0] > 0:
                 if t_boxes.shape[0] > 0:
@@ -689,28 +679,46 @@ class DetectionEvaluator:
     def compute(self):
         stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*self.stats)]
         if len(stats) and stats[0].any():
-             # call ap_per_class
              tp, fp, p, r, f1, ap, ap_class, p_curve, r_curve, f1_curve, x, prec_values = ap_per_class(*stats, names=self.names, plot=True, save_dir=self.log_dir or Path('.'))
              ap50, ap = ap[:, 0], ap.mean(1)
              mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
+
+             t_cls = stats[3]
+             total_instances = len(t_cls)
+
+             per_class = []
+             for i, c in enumerate(ap_class):
+                 c_idx = int(c)
+                 inst = int((t_cls == c_idx).sum())
+                 per_class.append({
+                     'Class': self.names.get(c_idx, f"class_{c_idx}"),
+                     'Instances': inst,
+                     'Precision': p[i],
+                     'Recall': r[i],
+                     'mAP_50': ap50[i],
+                     'mAP_50-95': ap[i]
+                 })
+
              return {
                  'mAP_50': map50,
                  'mAP_50-95': map,
                  'Precision': mp,
-                 'Recall': mr
+                 'Recall': mr,
+                 'Total_Instances': total_instances,
+                 'per_class': per_class
              }
         return {
             'mAP_50': 0.0,
             'mAP_50-95': 0.0,
             'Precision': 0.0,
-            'Recall': 0.0
+            'Recall': 0.0,
+            'per_class': []
         }
 
     def plot_confusion_matrix(self):
         if self.log_dir:
             self.confusion_matrix.plot(save_dir=self.log_dir)
 
-# Redefining DetectionMetric to use correct internal logic
 class DetectionMetric(BaseMetric):
     def __init__(self, cfg, device, model_head):
         from neuro_pilot.utils.losses import DetectionLoss
@@ -728,73 +736,37 @@ class DetectionMetric(BaseMetric):
         gt_boxes = batch['bboxes']
         gt_classes = batch['categories']
 
-        # Decoding logic
-        pred_logits = preds['bboxes']
-        strides = getattr(self.decoder, 'stride', torch.tensor([8., 16., 32.], device=self.device))
-        if isinstance(pred_logits, list):
-            anchors, strides = self.decoder.make_anchors(pred_logits, strides, 0.5)
-            xx = []
-            for x in pred_logits:
-                b, c, h, w = x.shape
-                xx.append(x.view(b, c, -1))
-            feat = torch.cat(xx, 2).permute(0, 2, 1)
-        else:
-            anchors, strides = self.decoder.make_anchors([pred_logits], strides, 0.5)
-            feat = pred_logits
-
-        reg_max = self.decoder.reg_max
-        nc = self.cfg.head.num_classes
-        pred_regs = feat[..., :reg_max * 4]
-        pred_cls = feat[..., reg_max * 4 : reg_max * 4 + nc]
-        pred_scores = pred_cls.sigmoid()
-
-        if reg_max > 1:
-            pred_dist = pred_regs.view(feat.shape[0], feat.shape[1], 4, reg_max).softmax(3).matmul(torch.arange(reg_max, dtype=torch.float, device=self.device))
-        else:
-            pred_dist = pred_regs
-        pred_bboxes_grid = self.decoder.dist2bbox(pred_dist, anchors, xywh=True)
-        pred_bboxes = pred_bboxes_grid * strides
+        from neuro_pilot.utils.nms import non_max_suppression
+        detections = non_max_suppression(
+            preds['bboxes'],
+            conf_thres=0.001,
+            iou_thres=0.6,
+            nc=self.cfg.head.num_classes
+        )
 
         formatted_preds = []
         formatted_targets = []
 
         for i in range(img.size(0)):
-            scores, labels = pred_scores[i].max(dim=1)
-            mask = scores > 0.01
-            kept_boxes = pred_bboxes[i][mask]
-            kept_scores = scores[mask]
-            kept_labels = labels[mask]
+            det = detections[i]
 
-            torch.empty((0,4), device=self.device)
-            torch.empty((0,), device=self.device)
-            torch.empty((0,), device=self.device)
-
-            if kept_boxes.numel() > 0:
-                 from torchvision.ops import nms
-                 x1 = kept_boxes[:, 0] - kept_boxes[:, 2]/2
-                 y1 = kept_boxes[:, 1] - kept_boxes[:, 3]/2
-                 x2 = kept_boxes[:, 0] + kept_boxes[:, 2]/2
-                 y2 = kept_boxes[:, 1] + kept_boxes[:, 3]/2
-                 xyxy = torch.stack([x1, y1, x2, y2], dim=1)
-                 keep = nms(xyxy, kept_scores, 0.6)
-
+            if det is not None and len(det):
                  formatted_preds.append({
-                     'boxes': xyxy[keep],
-                     'scores': kept_scores[keep],
-                     'labels': kept_labels[keep]
+                     'boxes': det[:, :4],
+                     'scores': det[:, 4],
+                     'labels': det[:, 5].long()
                  })
             else:
                  formatted_preds.append({
                      'boxes': torch.empty((0,4), device=self.device),
                      'scores': torch.empty((0,), device=self.device),
-                     'labels': torch.empty((0,), device=self.device)
+                     'labels': torch.empty((0,), device=self.device, dtype=torch.long)
                  })
 
             if gt_boxes[i].numel() > 0:
                 h, w = img.shape[2], img.shape[3]
                 scale = torch.tensor([w, h, w, h], device=self.device)
                 t_boxes_raw = gt_boxes[i].to(self.device).float() * scale
-                # xywh to xyxy
                 t_boxes = t_boxes_raw.clone()
                 t_boxes[:, 0] -= t_boxes_raw[:, 2]/2
                 t_boxes[:, 1] -= t_boxes_raw[:, 3]/2

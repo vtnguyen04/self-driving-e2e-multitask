@@ -24,7 +24,6 @@ class AttentionGate(nn.Module):
     def forward(self, g, x):
         g1 = self.W_g(g)
         x1 = self.W_x(x)
-        # Interpolate g to match x size if needed
         if g1.shape[2:] != x1.shape[2:]:
             g1 = F.interpolate(g1, size=x1.shape[2:], mode='bilinear', align_corners=True)
         psi = self.relu(g1 + x1)
@@ -58,23 +57,18 @@ class CommandGate(nn.Module):
             Tensor: [B, 1, 1] gating weight
         """
         B, C, H, W = x.shape
-        # Use autocast safety if available, otherwise standard
         try:
             with torch.amp.autocast(device_type=x.device.type if hasattr(x.device, 'type') else 'cuda', enabled=False):
                 x_f32 = x.float()
-                # Prevent extreme values
                 x_f32 = torch.clamp(torch.nan_to_num(x_f32, nan=0.0, posinf=10.0, neginf=-10.0), -10.0, 10.0)
                 x_gap = self.gap(x_f32).view(B, C)
-                
-                # Use dtype of weights for the linear layer
+
                 dtype = self.fc[0].weight.dtype
                 gate = self.fc(x_gap.to(dtype)).view(B, 1, 1)
-                
-                # Ensure the output is clean
+
                 gate = torch.clamp(torch.nan_to_num(gate, nan=0.5), 0.0, 1.0)
                 return gate.to(x.dtype)
         except:
-             # Fallback
              x_gap = self.gap(x).view(B, C)
              dtype = self.fc[0].weight.dtype
              gate = self.fc(x_gap.to(dtype)).view(B, 1, 1)
@@ -93,10 +87,8 @@ class VLFusion(nn.Module):
         self.mha = nn.MultiheadAttention(c1, num_heads, batch_first=True)
         self.norm = nn.LayerNorm(c1)
 
-        # Context Gate to filter command relevance
         self.gate = CommandGate(c1)
 
-        # Learnable residual gain, start at 1.0 to ensure command signal is present immediately
         self.resid_gain = nn.Parameter(torch.ones(1))
 
     def forward(self, x, lang_feats=None, **kwargs):
@@ -115,20 +107,16 @@ class VLFusion(nn.Module):
             lang_feats = kwargs['lang_feats']
 
         B, C, H, W = vision.shape
-        x_flat = vision.flatten(2).permute(0, 2, 1) # [B, HW, C]
+        x_flat = vision.flatten(2).permute(0, 2, 1)
 
-        # Calculate Context Relevance (Gate)
-        gate_score = self.gate(vision) # [B, 1, 1]
+        gate_score = self.gate(vision)
 
-        # Ensure dtype consistency for attention
         dtype = self.q.weight.dtype
         x_flat = x_flat.to(dtype)
         lang_feats = lang_feats.to(dtype)
 
-        # Cross-Attention
         attn_out, _ = self.mha(self.q(x_flat), self.k(lang_feats), self.v(lang_feats))
 
-        # Gated Residual Connection with learnable gain
         x_flat = self.norm(x_flat + self.resid_gain * gate_score * attn_out)
         x_flat = torch.nan_to_num(x_flat, nan=0.0)
 
@@ -147,13 +135,12 @@ class CFRBridge(nn.Module):
     def __init__(self, c_plan, c_percept, num_heads=4):
         super().__init__()
         self.q = nn.Linear(c_plan, c_plan)
-        # Project perception features to match planning dimension
         self.k = nn.Linear(c_percept, c_plan)
         self.v = nn.Linear(c_percept, c_plan)
 
         self.mha = nn.MultiheadAttention(c_plan, num_heads, batch_first=True)
         self.norm = nn.LayerNorm(c_plan)
-        self.resid_gain = nn.Parameter(torch.zeros(1)) # Start at 0, learn to use perception
+        self.resid_gain = nn.Parameter(torch.zeros(1))
 
     def forward(self, x, **kwargs):
         """
@@ -168,47 +155,37 @@ class CFRBridge(nn.Module):
         B, C_p, H_p, W_p = feat_plan.shape
         _, C_d, H_d, W_d = feat_percept.shape
 
-        # Flatten spatial dimensions
-        plan_flat = feat_plan.flatten(2).permute(0, 2, 1)       # [B, H*W, C_plan]
-        percept_flat = feat_percept.flatten(2).permute(0, 2, 1) # [B, H*W, C_percept]
+        plan_flat = feat_plan.flatten(2).permute(0, 2, 1)
+        percept_flat = feat_percept.flatten(2).permute(0, 2, 1)
 
-        # THE CAUSAL CHOKEPOINT: Stop gradient from flowing back to Perception
         percept_causal = percept_flat.detach()
 
-        # Ensure dtype consistency
         dtype = self.q.weight.dtype
         plan_flat = plan_flat.to(dtype)
         percept_causal = percept_causal.to(dtype)
 
-        # Cross-Attention: Planning queries Perception
         q = self.q(plan_flat)
         k = self.k(percept_causal)
         v = self.v(percept_causal)
 
         attn_out, _ = self.mha(q, k, v)
 
-        # Gated Residual Connection
         out_flat = self.norm(plan_flat + self.resid_gain * attn_out)
         out = out_flat.permute(0, 2, 1).reshape(B, C_p, H_p, W_p)
 
         return out
 
-class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
+class LanguagePromptEncoder(nn.Module):
     """Semantic mapping for commands using cached CLIP embeddings with synonym support."""
     forward_with_kwargs = True
-    def __init__(self, embed_dim=128, num_prompts=10, mode='embedding', clip_dim=512): # Added mode and clip_dim
+    def __init__(self, embed_dim=128, num_prompts=10, mode='embedding', clip_dim=512):
         super().__init__()
-        self.mode = mode # Store mode
+        self.mode = mode
         if mode == 'clip':
-            # Frozen semantic anchors with Synonym Augmentation
-            # We store [num_prompts, max_synonyms, clip_dim]
-            # For 4 commands, we simulate synonyms to force the model to learn the "semantic cluster"
-            # rather than a single point.
             max_synonyms = 5
             self.register_buffer('cached_embeds', torch.randn(num_prompts, max_synonyms, clip_dim))
             self.max_synonyms = max_synonyms
 
-            # Learnable projection to align CLIP space with Vision space
             self.projector = nn.Sequential(
                 nn.Linear(clip_dim, embed_dim),
                 nn.LayerNorm(embed_dim),
@@ -217,14 +194,12 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
             )
         else:
             self.embedding = nn.Embedding(num_prompts, embed_dim)
-            # Dictionary mapping for semantic clarity
             self.prompt_map = {
                 0: "go straight on drivable area",
                 1: "turn left at intersection",
                 2: "turn right at intersection",
                 3: "stop and wait at line"
             }
-
 
     def forward(self, x, indices=None, **kwargs):
         """
@@ -235,7 +210,6 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
             Tensor: [B, 1, embed_dim]
         """
         if indices is None:
-            # Prioritize indices from kwargs (passed from Trainer/tasks.py)
             if 'cmd' in kwargs:
                 indices = kwargs['cmd']
             elif 'command_idx' in kwargs:
@@ -245,35 +219,28 @@ class LanguagePromptEncoder(nn.Module): # Renamed back for compatibility
             elif isinstance(x, torch.Tensor) and x.dtype in {torch.long, torch.int}:
                 indices = x
             else:
-                # Fallback to zero (Straight) if no command provided
                 B = x.shape[0] if hasattr(x, 'shape') else 1
                 indices = torch.zeros(B, dtype=torch.long, device=getattr(x, 'device', 'cpu'))
 
-        # Ensure indices is 1D
         if torch.is_tensor(indices) and indices.dim() > 1:
-            if indices.shape[-1] == 4: # One-hot
+            if indices.shape[-1] == 4:
                 indices = indices.argmax(dim=-1)
             else:
                 indices = indices.view(-1)
         if self.mode == 'clip':
-            # Select Synonyms (Training Augmentation)
             if self.training:
-                # Randomly pick a synonym index for each sample in batch
                 syn_idx = torch.randint(0, self.max_synonyms, (indices.shape[0],), device=indices.device)
             else:
-                # Inference: Use canonical prompt (index 0) or average
                 syn_idx = torch.zeros_like(indices)
 
-            # Gather semantics: [B, clip_dim]
             raw_embeds = self.cached_embeds[indices, syn_idx]
 
-            # Project to vision dimension - Manual iteration for dtype stability
             x = raw_embeds.to(self.projector[0].weight.dtype)
             for layer in self.projector:
                 x = layer(x)
                 if torch.is_floating_point(x):
                     x = x.to(self.projector[-1].weight.dtype)
         else:
-            x = self.embedding(indices) # [B, embed_dim]
+            x = self.embedding(indices)
 
         return x.unsqueeze(1)

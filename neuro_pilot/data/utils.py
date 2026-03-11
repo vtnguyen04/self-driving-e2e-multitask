@@ -5,13 +5,10 @@ import yaml
 import numpy as np
 from typing import List, Union, Optional
 
-# Ultralytics-style extensions
-IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'  # include image suffixes
+IMG_FORMATS = 'bmp', 'dng', 'jpeg', 'jpg', 'mpo', 'png', 'tif', 'tiff', 'webp', 'pfm'
 
 def check_dataset(data, autodownload=True):
     """Download, check and/or unzip dataset if not found locally."""
-    # Download (optional)
-    # Check
     if isinstance(data, (str, Path)):
         data = yaml.safe_load(open(data))
     return data
@@ -19,7 +16,7 @@ def check_dataset(data, autodownload=True):
 def get_image_files(img_dir: Union[str, Path, List]) -> List[str]:
     """Read image files."""
     try:
-        f = []  # image files
+        f = []
         for p in img_dir if isinstance(img_dir, list) else [img_dir]:
             p = Path(p)
             if not p.exists():
@@ -41,7 +38,7 @@ def get_image_files(img_dir: Union[str, Path, List]) -> List[str]:
 
 def img2label_paths(img_paths):
     """Define label paths as a function of image paths."""
-    sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
+    sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
 def parse_yolo_label(label_p, nc=14):
@@ -62,11 +59,11 @@ def parse_yolo_label(label_p, nc=14):
             if not parts: continue
 
             c = int(parts[0])
-            if c == 99: # Special case for global command
+            if c == 99:
                 command = int(parts[1])
                 continue
 
-            if c == 98: # Special case for trajectory
+            if c == 98:
                 keypoints.append(parts[5:])
                 cls.append(c)
                 bboxes.append(parts[1:5])
@@ -77,27 +74,14 @@ def parse_yolo_label(label_p, nc=14):
                 bboxes.append(parts[1:5])
                 keypoints.append([])
             elif len(parts) > 5:
-                # Could be Pose (Keypoints) or Segmentation (Polygon)
-                # YOLO Pose usually matches: class x_c y_c w h (px py [v])...
-                # YOLO Segment matches: class x1 y1 x2 y2 ...
 
-                # Heuristic: if it's segmentation, it doesn't have w,h in typical BBox spots
-                # But Ultralytics often converts segments to bboxes internally.
-                # Here we'll treat them as keypoints if we want trajectories.
-
-                # For NeuroPilot trajectory, we expect waypoints.
-                # If it's a polygon, we take the points as waypoints.
-
-                if len(parts) % 2 == 0: # Likely Polygon x1 y1 x2 y2 ... (plus class) -> class + points
-                    # Segmentation format: class x1 y1 x2 y2 ...
-                    # We convert to a 'bounding box' for detection compatibility
+                if len(parts) % 2 == 0:
                     pts = np.array(parts[1:]).reshape(-1, 2)
                     x1, y1 = pts.min(0)
                     x2, y2 = pts.max(0)
                     bboxes.append([(x1+x2)/2, (y1+y2)/2, x2-x1, y2-y1])
-                    keypoints.append(parts[1:]) # Use points as waypoints
+                    keypoints.append(parts[1:])
                 else:
-                    # Likely Pose format: class x_c y_c w h px py v ...
                     bboxes.append(parts[1:5])
                     keypoints.append(parts[5:])
             else:
@@ -109,12 +93,10 @@ def parse_yolo_label(label_p, nc=14):
 def save_yolo_label(label_path: Union[str, Path], cls: List[int], bboxes: List[List[float]], keypoints: List[List[float]], command: Optional[int] = None):
     """Save label in standard YOLO format + extension for multi-task."""
     with open(label_path, 'w') as f:
-        # Write Global Command first as special class 99
         if command is not None:
             f.write(f"99 {command}\n")
 
         for c, bbox, kpts in zip(cls, bboxes, keypoints):
-            # bbox is typically [x_center, y_center, w, h] normalized
             line = f"{c} {' '.join(map(str, bbox))}"
             if kpts:
                 line += f" {' '.join(map(str, kpts))}"

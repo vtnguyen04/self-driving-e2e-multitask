@@ -2,61 +2,50 @@ from neuro_pilot import NeuroPilot
 
 
 def run_real_training():
-    model = NeuroPilot("neuro_pilot/cfg/models/neuralPilot_dual.yaml", scale="s")
+    model = NeuroPilot("neuro_pilot/cfg/models/neuralPilot.yaml", scale="n")
 
-    # Training configuration overrides
-    overrides = {
-        "data": {
-            "dataset_yaml": "tools/labeler/data/exports/project_17/data_final/data.yaml",
-            "batch_size": 8,
-            "image_size": 320,
-            "augment": {
-                "rotate_deg": 5.0,
-                "translate": 0.2,
-                "scale": 0.2,
-                "color_jitter": 0.0,
-                "shear": 0.0,
-                "hsv_h": 0.1,
-                "hsv_s": 0.1,
-                "hsv_v": 0.1,
-                "perspective": 0.1,
-                "mosaic": 0.0,
-                "noise_prob": 0.0,
-                "blur_prob": 0.05,
-            },
-        },
-        "loss": {
-            "lambda_det": 0,
-            "lambda_traj": 5.0,
-            "lambda_heatmap": 4,
-            "lambda_cls": 2.0,
-            "lambda_smooth": 0.1,
-            "lambda_gate": 0.5,
-            "use_uncertainty": False,
-            # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
-            "use_fdat": True,
-            "fdat_alpha_lane": 10.0,
-            "fdat_beta_lane": 1.0,
-            "fdat_alpha_inter": 5.0,
-            "fdat_beta_inter": 3.0,
-            "fdat_lambda_heading": 2.0,
-            "fdat_lambda_endpoint": 5.0,
-        },
-        "trainer": {
-            "experiment_name": "train",
-            "image_size": 320,
-            "max_epochs": 2,
-            "learning_rate": 3e-4,  # Lower LR to compensate for no uncertainty weighting
-            "grad_clip_norm": 5.0,  # Match looseness of debug pipeline (10.0) but keep some safety
-            "optimizer": "AdamW",
-            "lr_final": 0.01,
-            "warmup_epochs": 3.0,
-            "use_ema": False,
-            "use_amp": False,
-        },
-    }
+    model.train(
+        data="/home/quynhthu/Downloads/data_final/data.yaml",
 
-    model.train(**overrides)
+        # Override Trainer parameters
+        epochs=10,
+        batch=16,
+        learning_rate=1e-3,  # Increased from 5e-4 for faster breakout
+        patience=100,        # Alias for early_stop_patience
+
+        # Loss Scaling
+        lambda_traj=1,
+        lambda_det=2,
+        lambda_heatmap=1.5,
+        lambda_gate=1.0,
+        lambda_smooth=0.01,
+
+        # Detection Sub-Losses
+        box=2.5,
+        cls_det=10.0,
+        dfl=2.0,
+
+        # Advanced FDAT Parameters
+        use_fdat=True,
+        use_uncertainty=False,
+        fdat_alpha_lane=15.0,
+        fdat_beta_lane=2.0,
+
+        rotate_deg = 5.0,
+        translate = 0.2,
+        scale = 0.2,
+        color_jitter = 0.0,
+        shear = 0.0,
+        hsv_h = 0.5,
+        hsv_s = 0.3,
+        hsv_v = 0.2,
+        perspective = 0.1,
+        mosaic = 0.0,
+        noise_prob = 0.0,
+        blur_prob = 0.05,
+        experiment_name = "final_train",
+        early_stop_patience = 100
+    )
 
 if __name__ == "__main__":
     run_real_training()

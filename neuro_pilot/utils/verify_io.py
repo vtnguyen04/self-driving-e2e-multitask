@@ -7,25 +7,20 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/neuralPilot.yaml"):
     logger.info(f"--- Verifying Model I/O Standards: {cfg_path} ---")
 
     device = torch.device("cpu")
-    # nc is 14 for detect, nm is 4 for classes/trajectory commands
     model = DetectionModel(cfg_path, nc=14).to(device)
     model.eval()
 
-    # Input Verification
     B, C, H, W = 1, 3, 224, 224
     img = torch.randn(B, C, H, W)
     cmd_onehot = torch.zeros(B, 4)
-    cmd_onehot[0, 0] = 1.0 # Follow Lane
+    cmd_onehot[0, 0] = 1.0
 
     logger.info(f"Input Image Shape: {img.shape}")
     logger.info(f"Input Command Shape: {cmd_onehot.shape}")
 
-    # Forward Pass
     with torch.no_grad():
         output = model(img, cmd_onehot=cmd_onehot)
 
-    # Output Dictionary Key Verification
-    # keys we expect for a production NeuroPilot model
     required_keys = ['one2many', 'waypoints', 'heatmap', 'classes']
     logger.info(f"Output Dictionary Keys: {list(output.keys())}")
 
@@ -35,10 +30,8 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/neuralPilot.yaml"):
     else:
         logger.info("✅ All required MT-API keys present.")
 
-    # Shape Verification
     logger.info("--- Tensor Shape Analysis ---")
 
-    # Detection
     det = output.get('one2many')
     if det is not None:
         if isinstance(det, list):
@@ -46,22 +39,18 @@ def verify_io(cfg_path="neuro_pilot/cfg/models/neuralPilot.yaml"):
         elif isinstance(det, dict):
              logger.info(f"  Detect (one2many) dict keys: {det.keys()}")
 
-    # Heatmap
     heatmap = output.get('heatmap')
     if heatmap is not None:
          logger.info(f"  Heatmap Shape: {heatmap.shape} (Standard: [B, 1, H/4, W/4])")
 
-    # Trajectory
     traj = output.get('waypoints')
     if traj is not None:
          logger.info(f"  Waypoints Shape: {traj.shape} (Standard: [B, 10, 2])")
 
-    # Classification
     cls = output.get('classes')
     if cls is not None:
          logger.info(f"  Classes Shape: {cls.shape} (Standard: [B, 4])")
 
-    # Gate Score (Vision-Language Fusion)
     gate = output.get('gate_score')
     if gate is not None:
          logger.info(f"  Gate Score Shape: {gate.shape} (Value range: {gate.min().item():.2f} - {gate.max().item():.2f})")

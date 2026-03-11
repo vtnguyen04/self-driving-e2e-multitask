@@ -6,7 +6,6 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from neuro_pilot.utils.logger import logger
 
-
 class BaseTask(ABC):
     """
     Abstract Base Class for NeuroPilot Tasks.
@@ -47,7 +46,6 @@ class BaseTask(ABC):
         """Load weights into the model."""
         pass
 
-
 class TaskRegistry:
     """
     Registry for managing available tasks.
@@ -78,13 +76,10 @@ class TaskRegistry:
     def list_tasks(cls) -> list[str]:
         return list(cls._registry.keys())
 
-
-# Default Implementation for standard NeuroPilot Multitask
 from neuro_pilot.utils.losses import CombinedLoss
 from neuro_pilot.engine.trainer import Trainer
 from neuro_pilot.engine.validator import Validator
 from neuro_pilot.utils.torch_utils import load_checkpoint
-
 
 @TaskRegistry.register("multitask")
 class MultiTask(BaseTask):
@@ -95,21 +90,29 @@ class MultiTask(BaseTask):
     def __init__(self, cfg, overrides=None, backbone=None):
         super().__init__(cfg, overrides, backbone)
         self.names = {i: f"class_{i}" for i in range(self.cfg.head.num_classes)}
-        # Try to load real names from dataset YAML
         if hasattr(self.cfg.data, "dataset_yaml") and self.cfg.data.dataset_yaml:
             from neuro_pilot.data.utils import check_dataset
 
             try:
                 data_cfg = check_dataset(self.cfg.data.dataset_yaml)
                 if "names" in data_cfg:
-                    self.names = data_cfg["names"]
+                    names = data_cfg["names"]
+                    if isinstance(names, list):
+                        self.names = {i: name for i, name in enumerate(names)}
+                    elif isinstance(names, dict):
+                        # Ensure keys are integers
+                        self.names = {int(k): v for k, v in names.items()}
+                    else:
+                        self.names = names
+                    logger.debug(f"MultiTask loaded {len(self.names)} names from {self.cfg.data.dataset_yaml}: {list(self.names.values())[:3]}...")
+                else:
+                    logger.warning(f"No 'names' key found in {self.cfg.data.dataset_yaml}")
             except Exception as e:
                 logger.warning(
                     f"Failed to load names from {self.cfg.data.dataset_yaml}: {e}"
                 )
 
     def build_model(self) -> nn.Module:
-        # Dynamic YAML Architecture
         from neuro_pilot.nn.tasks import DetectionModel
 
         model_cfg = self.overrides.get("model_cfg")
@@ -123,17 +126,17 @@ class MultiTask(BaseTask):
                 ch=3,
                 nc=self.cfg.head.num_classes,
                 skip_heatmap_inference=skip_heatmap,
+                names=self.names,
             )
-            model.names = self.names
             self.model = model
             return model
 
-        # Default dynamic template
         model = DetectionModel(
             cfg="neuro_pilot/cfg/models/neuralPilot.yaml",
             nc=self.cfg.head.num_classes,
             skip_heatmap_inference=skip_heatmap,
             verbose=False,
+            names=self.names,
         )
         self.model = model
         return model
@@ -155,12 +158,11 @@ class MultiTask(BaseTask):
     def get_validator(self) -> Validator:
         if self.criterion is None:
             self.build_criterion()
-        # Use cuda as default, but allow override
         device = self.overrides.get(
             "device", "cuda" if torch.cuda.is_available() else "cpu"
         )
         v = Validator(self.cfg, self.model, self.criterion, device=device)
-        v.names = self.names  # Pass names for correct mAP calculation
+        v.names = self.names
         return v
 
     def load_weights(self, weights_path: Union[str, Path]):
@@ -168,13 +170,11 @@ class MultiTask(BaseTask):
             self.build_model()
         load_checkpoint(weights_path, self.model)
 
-
 @TaskRegistry.register("detection")
 class DetectionTask(MultiTask):
     """Detection-only training. Disables trajectory, heatmap, classification, and gate losses."""
 
     def __init__(self, cfg, overrides=None, backbone=None):
-        # Force detection-only lambdas before parent init
         from neuro_pilot.cfg.schema import deep_update
         loss_overrides = {
             "loss": {
@@ -191,7 +191,6 @@ class DetectionTask(MultiTask):
             overrides = loss_overrides
         super().__init__(cfg, overrides, backbone)
         logger.info("Task: Detection-only (trajectory/heatmap/cls losses disabled)")
-
 
 @TaskRegistry.register("trajectory")
 class TrajectoryTask(MultiTask):

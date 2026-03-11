@@ -16,17 +16,15 @@ class TimmBackbone(nn.Module):
         except Exception as e:
             logger.warning(f"Failed to create timm model '{model_name}' (pretrained={pretrained}). Error: {e}")
 
-            # Retry without pretrained weights (Internet/Weight issue)
             if pretrained:
                 logger.info(f"Retrying '{model_name}' with pretrained=False...")
                 try:
                     self.model = timm.create_model(model_name, pretrained=False, features_only=features_only, out_indices=out_indices)
                     logger.info(f"Successfully created '{model_name}' (Random Weights).")
-                    return # Success
+                    return
                 except Exception as e2:
                     logger.error(f"Failed to create model even with pretrained=False. Error: {e2}")
 
-            # Retry stripping tag if applicable (e.g. .e2400_r224_in1k)
             base_name = model_name.split('.')[0]
             if base_name != model_name:
                 logger.info(f"Retrying with base name '{base_name}'...")
@@ -34,7 +32,6 @@ class TimmBackbone(nn.Module):
                     self.model = timm.create_model(base_name, pretrained=pretrained, features_only=features_only, out_indices=out_indices)
                     return
                 except:
-                     # One last try with base name and no pretrained
                      if pretrained:
                          try:
                              self.model = timm.create_model(base_name, pretrained=False, features_only=features_only, out_indices=out_indices)
@@ -54,12 +51,11 @@ class TimmBackbone(nn.Module):
             m = timm.create_model(model_name, pretrained=False, features_only=True)
             return m.feature_info.channels()
         except:
-            # Fallback for common models if timm fails or in restricted env
             if 'mobilenetv4_conv_small' in model_name: return [32, 32, 64, 96, 960]
             if 'mobilenetv4_conv_medium' in model_name: return [32, 48, 80, 160, 960]
             if 'mobilenetv4_conv_large' in model_name: return [24, 48, 96, 192, 960]
             if 'resnet50' in model_name: return [64, 256, 512, 1024, 2048]
-            return [64, 128, 256, 512, 960] # Generic fallback with P5 at 960
+            return [64, 128, 256, 512, 960]
 
     def forward(self, x):
         return self.model(x)
@@ -72,10 +68,8 @@ class NeuroPilotBackbone(nn.Module):
     forward_with_kwargs = True
     @staticmethod
     def get_channels(model_name):
-        # Maps keys to channels for NeuroPilotBackbone
         if 'small' in model_name:
             return {'p3': 64, 'p4': 64, 'p5': 64, 'c2': 32, 'gate_score': 1}
-        # Medium and others
         return {'p3': 128, 'p4': 128, 'p5': 128, 'c2': 48, 'gate_score': 1}
 
     def __init__(self, backbone_name='mobilenetv4_conv_medium', num_commands=4, dropout_prob=0.0):
@@ -83,10 +77,8 @@ class NeuroPilotBackbone(nn.Module):
         self.backbone = timm.create_model(backbone_name, pretrained=True, features_only=True)
         feat_info = self.backbone.feature_info.channels()
 
-        # Stride 4, 8, 16, 32
         self.c2_dim, self.c3_dim, self.c4_dim, self.c5_dim = feat_info[1], feat_info[2], feat_info[3], feat_info[4]
 
-        # Store actual channels for dynamic discovery
         self.output_channels = {'p3': 64 if 'small' in backbone_name else 128,
                                 'p4': 64 if 'small' in backbone_name else 128,
                                 'p5': 64 if 'small' in backbone_name else 128,
@@ -122,8 +114,7 @@ class NeuroPilotBackbone(nn.Module):
         else:
              cmd_idx = cmd_onehot.argmax(dim=1)
 
-        # Language Context Integration
-        lang_feats = self.prompt_encoder(cmd_idx, **kwargs) # [B, 1, neck_dim]
+        lang_feats = self.prompt_encoder(cmd_idx, **kwargs)
         out = self.vl_fusion(p3, lang_feats=lang_feats, **kwargs)
         p3_p, gate_score = out["feats"], out["gate_score"]
         return {'p3': p3_p, 'p4': p4, 'p5': p5, 'c2': c2, 'gate_score': gate_score}

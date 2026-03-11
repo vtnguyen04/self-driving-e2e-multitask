@@ -57,10 +57,10 @@ def clip_boxes(boxes: torch.Tensor | np.ndarray, shape: tuple[int, int]) -> torc
     """Clip bounding boxes to image boundaries (h, w)."""
     h, w = shape[:2]
     if isinstance(boxes, torch.Tensor):
-        boxes[..., 0].clamp_(0, w)  # x1
-        boxes[..., 1].clamp_(0, h)  # y1
-        boxes[..., 2].clamp_(0, w)  # x2
-        boxes[..., 3].clamp_(0, h)  # y2
+        boxes[..., 0].clamp_(0, w)
+        boxes[..., 1].clamp_(0, h)
+        boxes[..., 2].clamp_(0, w)
+        boxes[..., 3].clamp_(0, h)
     else:
         boxes[..., [0, 2]] = boxes[..., [0, 2]].clip(0, w)
         boxes[..., [1, 3]] = boxes[..., [1, 3]].clip(0, h)
@@ -79,31 +79,29 @@ def clip_coords(coords: torch.Tensor | np.ndarray, shape: tuple[int, int]) -> to
 
 def scale_boxes(img1_shape: tuple, boxes: torch.Tensor, img0_shape: tuple, ratio_pad=None) -> torch.Tensor:
     """Rescale boxes from img1_shape to img0_shape."""
-    if ratio_pad is None:  # calculate from img0_shape
+    if ratio_pad is None:
         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])
         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2
     else:
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
 
-    # Use int/round logic consistent with LetterBox for discrete pixel alignment
     pad = round(pad[0] - 0.1), round(pad[1] - 0.1)
 
-    boxes[..., [0, 2]] -= pad[0]  # x padding
-    boxes[..., [1, 3]] -= pad[1]  # y padding
+    boxes[..., [0, 2]] -= pad[0]
+    boxes[..., [1, 3]] -= pad[1]
     boxes[..., :4] /= gain
     return clip_boxes(boxes, img0_shape)
 
 def scale_coords(img1_shape: tuple, coords: torch.Tensor, img0_shape: tuple, ratio_pad=None) -> torch.Tensor:
     """Rescale coordinates (waypoints) from img1_shape to img0_shape."""
-    if ratio_pad is None:  # calculate from img0_shape
+    if ratio_pad is None:
         gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])
         pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2
     else:
         gain = ratio_pad[0][0]
         pad = ratio_pad[1]
 
-    # Use int/round logic consistent with LetterBox
     pad = round(pad[0] - 0.1), round(pad[1] - 0.1)
 
     coords[..., 0] = (coords[..., 0] + 1) / 2 * img1_shape[1]
@@ -140,7 +138,7 @@ def resample_segments(segments: list[np.ndarray], n: int = 1000) -> list[np.ndar
     """Resample segments to n points using linear interpolation."""
     for i, s in enumerate(segments):
         if len(s) == n: continue
-        s = np.concatenate((s, s[0:1, :]), axis=0) # close loop
+        s = np.concatenate((s, s[0:1, :]), axis=0)
         x = np.linspace(0, len(s) - 1, n)
         xp = np.arange(len(s))
         segments[i] = np.concatenate([np.interp(x, xp, s[:, j]) for j in range(2)]).reshape(2, -1).T
@@ -153,7 +151,6 @@ def empty_like(x):
 def clean_str(s: str) -> str:
     """Clean string by replacing special characters with '_'."""
     return re.sub(pattern="[|@#!¡·$€%&()=?¿^*;:,¨`><+]", repl="_", string=s)
-
 
 def xywh2ltwh(x):
     """

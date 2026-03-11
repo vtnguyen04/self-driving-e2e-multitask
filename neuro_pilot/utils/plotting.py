@@ -23,7 +23,6 @@ def smooth_trajectory(points: np.ndarray, window_size: int = 5) -> np.ndarray:
     """
     if len(points) < window_size:
         return points
-    # Smooth each axis independently
     smoothed = np.copy(points)
     for i in range(points.shape[1]):
         smoothed[:, i] = np.convolve(points[:, i], np.ones(window_size)/window_size, mode='same')
@@ -36,7 +35,6 @@ class Colors:
     semantic self-driving tasks (Ground Truth, Predictions, Trajectories).
     """
     def __init__(self):
-        # 24-color palette
         hexs = (
             "FF3838", "2C99A8", "FF9D1C", "FF42CD", "C0F013", "12CF55", "049DB7", "042AFF",
             "5816FB", "D21BF3", "FF56BA", "FF8E1C", "FFB21C", "E0F612", "11E855", "04B0B7",
@@ -45,7 +43,6 @@ class Colors:
         self.palette = [self.hex2rgb(f"#{c}") for c in hexs]
         self.n = len(self.palette)
 
-        # Specialized Pose/Keypoint palette
         self.pose_palette = np.array([
             [255, 128, 0], [255, 153, 51], [255, 178, 102], [230, 230, 0], [255, 153, 255],
             [153, 204, 255], [255, 102, 255], [255, 51, 255], [102, 178, 255], [51, 153, 255],
@@ -53,13 +50,11 @@ class Colors:
             [51, 255, 51], [0, 255, 0], [0, 0, 255], [255, 0, 0], [255, 255, 255]
         ], dtype=np.uint8)
 
-        # Semantic Task Colors
-        self.target = (0, 255, 0)       # Green (GT)
-        self.pred = (255, 0, 255)       # Magenta (Prediction)
-        self.waypoint = (0, 255, 255)   # Cyan
-        self.trajectory = (0, 0, 255)   # Blue
+        self.target = (0, 255, 0)
+        self.pred = (255, 0, 255)
+        self.waypoint = (0, 255, 255)
+        self.trajectory = (0, 0, 255)
 
-        # Internal Contrast Maps
         self.dark_colors = {(235, 219, 11), (243, 243, 243), (183, 223, 0), (221, 111, 255), (0, 237, 204)}
         self.light_colors = {(255, 42, 4), (79, 68, 255), (255, 0, 189), (255, 180, 0), (186, 0, 221)}
 
@@ -89,7 +84,6 @@ class Annotator:
         input_is_pil = isinstance(im, Image.Image)
         self.pil = pil or input_is_pil
         image_shape = im.size if input_is_pil else im.shape[:2]
-        # Increase minimum line width for visibility on small images
         self.lw = line_width or max(round(sum(image_shape) / 2 * 0.005), 2)
 
         if self.pil:
@@ -98,7 +92,6 @@ class Annotator:
                 self.im = self.im.convert("RGB")
             self.draw = ImageDraw.Draw(self.im, "RGBA")
             try:
-                # Significantly larger default font (5% of img size)
                 size = font_size or max(round(sum(self.im.size) / 2 * 0.05), 18)
                 self.font = ImageFont.truetype(font, size)
             except Exception:
@@ -106,10 +99,8 @@ class Annotator:
         else:
             assert im.data.contiguous, "Image must be contiguous."
             self.im = im if im.flags.writeable else im.copy()
-            # Increase thickness for BBox text (Requested: "tăng độ đậm")
-            self.tf = max(self.lw, 3)  # thickness (at least 3px)
-            # Decrease font scale for better readability as requested by user
-            self.sf = self.lw / 3.0          # scale (was / 1.5)
+            self.tf = max(self.lw, 3)
+            self.sf = self.lw / 3.0
 
     def box_label(self, box: Union[list, tuple, np.ndarray, torch.Tensor], label: str = "",
                   color: tuple = (128, 128, 128), txt_color: tuple = (255, 255, 255)):
@@ -204,11 +195,8 @@ class Annotator:
 
         valid_mask = mask == 255
         if np.any(valid_mask):
-            # Efficient blending: only blend the region of interest if possible,
-            # but for now, a full-image addWeighted with a mask is safer and often faster than per-pixel loops.
             color_mask = np.zeros_like(self.im)
             cv2.fillPoly(color_mask, np.array([poly], dtype=np.int32), color)
-            # Use the mask to only affect the polygon area
             cv2.addWeighted(self.im, 1.0, color_mask, alpha, 0, dst=self.im)
 
     def text(self, pos: tuple, text: str, color: tuple = (255, 255, 255), bg_color: Optional[tuple] = None, scale: Optional[float] = None):
@@ -275,17 +263,14 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
     """Report for batch inspection."""
     img_tensor = batch['image']
 
-    # Ensure names is a dict
     if isinstance(names, list):
         names = {i: n for i, n in enumerate(names)}
 
-    # Handle both direct and nested target structures from Trainer
     targets_root = batch.get('targets', batch)
     targets_root.get('bboxes')
     waypoints_gt = targets_root.get('waypoints')
 
     with torch.no_grad():
-        # ImageNet Denormalization for visual review
         mean = torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1, 3, 1, 1)
         img_denorm = img_tensor * std + mean
@@ -309,27 +294,21 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             strides = torch.tensor([8, 16, 32], device=img_tensor.device)
             anchors, stride_tensor = make_anchors(output['feats'], strides)
 
-            # Decode Raw Distribution to Distance
             reg_max = output['boxes'].shape[1] // 4
-            pred_dist = output['boxes'].permute(0, 2, 1) # [B, A, 4*reg_max]
+            pred_dist = output['boxes'].permute(0, 2, 1)
             if reg_max > 1:
                 proj = torch.arange(reg_max, dtype=pred_dist.dtype, device=pred_dist.device)
                 pred_dist = pred_dist.view(B, -1, 4, reg_max).softmax(3).matmul(proj)
 
-            # Convert Distance to XYWH (Pixel space)
-            # pred_dist is ltrb in grid units. dist2bbox converts to cxcywh in grid units.
             pred_bboxes = dist2bbox(pred_dist, anchors.unsqueeze(0), xywh=True) * stride_tensor
 
-            # Apply NMS (conf_thres should be enough to filter noise)
             pred_scores = output['scores'].sigmoid()
             combined = torch.cat([pred_bboxes.permute(0, 2, 1), pred_scores], dim=1)
-            # Use standard conf_thres (0.25) and limit det to 50 for visualization clarity
             detections = non_max_suppression(combined, conf_thres=max(conf_thres, 0.25), iou_thres=0.45, max_det=50)
 
     for i in range(N):
         y_off = i * H
 
-        # Path Column (GT Green, Pred Magenta)
         can_p = img_bgr[i].copy(); ann_p = Annotator(can_p)
         targets_i = batch.get('targets', batch)
 
@@ -338,30 +317,23 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
              wp_gt = targets_i['waypoints'][i].cpu().numpy()
 
         cmd_idx = targets_i.get('command_idx')[i].item() if 'command_idx' in targets_i and targets_i['command_idx'] is not None else -1
-        # Updated mapping based on user feedback (No UTURN)
-        # Assumed standard: 0: FOLLOW, 1: LEFT, 2: RIGHT, 3: STRAIGHT
         cmd_map = {0: "FOLLOW LANE", 1: "LEFT", 2: "RIGHT", 3: "STRAIGHT"}
         cmd_txt = cmd_map.get(cmd_idx, f"CMD:{cmd_idx}")
-        # Reduced scale from 1.4 to 1.0 based on user feedback
         ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)
 
         if wp_gt is not None:
-            # Check if this image actually has valid GT waypoints by seeing if its index is in batch_idx_waypoints
             has_gt_wp = True
             if 'batch_idx_waypoints' in targets_i:
                 has_gt_wp = (targets_i['batch_idx_waypoints'] == i).any().item()
             else:
-                # Fallback heuristic: if all waypoints are EXACTLY 0.0 (padding), skip drawing
                 if np.all(wp_gt == 0.0):
                     has_gt_wp = False
 
             if has_gt_wp:
                 wp_gt = (wp_gt + 1) / 2 * [W, H]
-                # Increased thickness based on user request ("tăng độ dày")
                 ann_p.trajectory(wp_gt, color=(0, 255, 0), thickness=5); ann_p.waypoints(wp_gt, color=(0, 200, 0), radius=5)
 
         if output is not None and 'waypoints' in output:
-            # Filter prediction using the trajectory existence logit
             show_pred = True
             if 'has_traj_logit' in output:
                 traj_conf = torch.sigmoid(output['has_traj_logit'][i]).item()
@@ -380,22 +352,17 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
                     wp_p = (wp_p + 1) / 2 * [W, H]
                     ann_p.trajectory(wp_p, color=(255, 0, 255), thickness=5); ann_p.waypoints(wp_p, color=(200, 0, 200), radius=5)
 
-        # Reduced scale from 1.4 to 1.0 based on user feedback
         ann_p.text((10, 80), f"GO: {cmd_txt}", color=(255, 255, 0), bg_color=(0,0,0), scale=1.0)
-        # ann_p.text((10, 40), "PATH", bg_color=(0,0,0), scale=1.2)
         mosaic[y_off:y_off+H, 0:W] = ann_p.result()
 
-        # Vision Column (Detection - Pred in RED)
         img_rgb = cv2.cvtColor(img_bgr[i], cv2.COLOR_BGR2RGB)
         can_v = img_rgb.copy(); ann_v = Annotator(can_v, pil=True)
 
-        # Ground Truth Bounding Boxes: Filter by batch_idx for flattened data
         if 'batch_idx' in targets_i:
             idx_mask = (targets_i['batch_idx'] == i)
             gt_b = targets_i['bboxes'][idx_mask]
             gt_c = targets_i['cls'][idx_mask]
         else:
-            # Fallback for old list-style targets
             gt_b = None
             if 'bboxes' in targets_i and targets_i['bboxes'] is not None and i < len(targets_i['bboxes']):
                 gt_b = targets_i.get('bboxes')[i]
@@ -411,14 +378,11 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             for idx, b in enumerate(gt_b):
                 if b.sum() == 0: continue
                 cls_idx = int(gt_c[idx]) if gt_c is not None and idx < len(gt_c) else -1
-                # b is [cx, cy, w, h] normalized 0-1
                 x1, y1, x2, y2 = xywh2xyxy(b.reshape(1, 4)).flatten() * [W, H, W, H]
 
-                # Use class-specific color, but darker or distinct for GT
                 color = colors(cls_idx, bgr=True)
-                txt_color = (255, 255, 255) # White text
+                txt_color = (255, 255, 255)
 
-                # Add [GT] prefix to distinguish from predictions
                 gt_label = f"[GT] {names.get(cls_idx, cls_idx)}"
                 ann_v.box_label([x1, y1, x2, y2], label=gt_label, color=color, txt_color=txt_color)
 
@@ -427,19 +391,15 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             if torch.is_tensor(det): det = det.detach().cpu().numpy()
             for d in det:
                 cls_id = int(d[5]); conf = d[4]
-                # Use class-specific color
                 color = colors(cls_id, bgr=True)
 
                 label_txt = f"{names.get(cls_id, str(cls_id))} {conf:.2f}"
                 ann_v.box_label(d[:4], label=label_txt, color=color)
         ann_v.text((10, 40), "VISION", bg_color=(0,0,0), scale=1.2)
 
-        # PIL Annotator works in RGB, but our export canvas expects BGR
         ann_v_res = cv2.cvtColor(ann_v.result(), cv2.COLOR_RGB2BGR)
         mosaic[y_off:y_off+H, W:2*W] = ann_v_res
 
-        # Heatmap Columns
-        # Heatmap Columns
         if has_hm:
             from neuro_pilot.utils.losses import HeatmapLoss
             hm_gen = HeatmapLoss(device='cpu')
@@ -452,7 +412,6 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
             hm_tensor = output['heatmap']
             if isinstance(hm_tensor, dict): hm_tensor = hm_tensor.get('heatmap', next(iter(hm_tensor.values())))
 
-            # Apply Sigmoid and handle noise
             hm_i = torch.sigmoid(hm_tensor[i]).detach().cpu().numpy().squeeze()
             if hm_i.ndim == 3: hm_i = hm_i.mean(axis=0)
 
@@ -461,7 +420,6 @@ def plot_batch(batch: Dict[str, Any], output: Optional[Dict[str, Any]], save_pat
                 hm_i = hm_i / (hm_max + 1e-6)
 
             hm_i = np.clip(hm_i, 0, 1)
-            # Ensure float32 for cv2.resize
             hm_i = cv2.resize(np.nan_to_num(hm_i).astype(np.float32), (W, H))
             can_pred = cv2.addWeighted(cv2.applyColorMap((hm_i*255).astype(np.uint8), cv2.COLORMAP_JET), 0.6, img_bgr[i].copy(), 0.4, 0)
             mosaic[y_off:y_off+H, 3*W:4*W] = can_pred

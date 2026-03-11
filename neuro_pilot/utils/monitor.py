@@ -13,18 +13,14 @@ import sys
 import logging
 from datetime import datetime
 from pathlib import Path
- # import psutil (removed redundant import)
 
-# Reuse our existing logger
 from neuro_pilot.utils.logger import logger as LOGGER
 
-# Mock Ultralytics constants/utilities if not present
 MACOS = sys.platform == "darwin"
 RANK = int(os.getenv('RANK', -1))
 
 def check_requirements(requirements):
-    """Simple check requirements or no-op."""
-    # TODO: Implement robust check if needed
+    """Placeholder for dependency validation."""
     pass
 
 class ConsoleLogger:
@@ -39,28 +35,24 @@ class ConsoleLogger:
         if destination is not None and not self.is_api:
             self.destination = Path(destination)
 
-        # Batching configuration
         self.batch_size = max(1, batch_size)
         self.flush_interval = flush_interval
         self.on_flush = on_flush
 
-        # Console capture state
         self.original_stdout = sys.stdout
         self.original_stderr = sys.stderr
         self.active = False
-        self._log_handler = None  # Track handler for cleanup
+        self._log_handler = None
 
-        # Buffer for batching
         self.buffer = []
         self.buffer_lock = threading.Lock()
         self.flush_thread = None
         self.chunk_id = 0
 
-        # Deduplication state
         self.last_line = ""
         self.last_time = 0.0
-        self.last_progress_line = ""  # Track progress sequence key for deduplication
-        self.last_was_progress = False  # Track if last line was a progress bar
+        self.last_progress_line = ""
+        self.last_was_progress = False
 
     def start_capture(self):
         """Start capturing console output and redirect stdout/stderr."""
@@ -71,14 +63,12 @@ class ConsoleLogger:
         sys.stdout = self._ConsoleCapture(self.original_stdout, self._queue_log)
         sys.stderr = self._ConsoleCapture(self.original_stderr, self._queue_log)
 
-        # Hook standard python logging if used (Loguru hijacks it usually, but let's be safe)
         try:
             self._log_handler = self._LogHandler(self._queue_log)
             logging.getLogger("neuro_pilot").addHandler(self._log_handler)
         except Exception:
             pass
 
-        # Start background flush thread for batched mode
         if self.batch_size > 1:
             self.flush_thread = threading.Thread(target=self._flush_worker, daemon=True)
             self.flush_thread.start()
@@ -99,7 +89,6 @@ class ConsoleLogger:
                 pass
             self._log_handler = None
 
-        # Final flush
         self._flush_buffer()
 
     def _queue_log(self, text):
@@ -204,7 +193,6 @@ class ConsoleLogger:
                 with self.destination.open("a", encoding="utf-8") as f:
                     f.write(content + "\n")
         except Exception as e:
-             # Write to original stderr to avoid recursion loop
              self.original_stderr.write(f"Console logger write error: {e}\n")
 
     class _ConsoleCapture:
@@ -226,7 +214,6 @@ class ConsoleLogger:
         def emit(self, record):
             self.callback(self.format(record) + "\n")
 
-
 class SystemLogger:
     """Log dynamic system metrics for training monitoring."""
 
@@ -243,8 +230,6 @@ class SystemLogger:
     def _init_nvidia(self):
         if MACOS: return False
         try:
-            # We assume user installed 'nvidia-ml-py' or equivalent if they want this
-            # neuro_pilot dependencies might not enforce it yet
             import pynvml
             pynvml.nvmlInit()
             self.pynvml = pynvml

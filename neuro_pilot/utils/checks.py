@@ -9,7 +9,6 @@ from pathlib import Path
 
 import torch
 
-# Global Constants
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ["Darwin", "Linux", "Windows"])
 PYTHON_VERSION = platform.python_version()
 TORCH_VERSION = str(torch.__version__)
@@ -24,7 +23,6 @@ def check_version(current: str, required: str, name: str = "version", hard: bool
     if not current or not required:
         return True
 
-    # Simple version parsing logic
     def parse(v):
         return tuple(map(int, re.findall(r"\d+", v)[:3])) or (0, 0, 0)
 
@@ -59,9 +57,7 @@ def check_font(font: str = "Arial.ttf") -> Path:
     if file.exists():
         return file
 
-    # Placeholder for system font search or safe download
-    # In a real environment, we'd use requests to download from a NeuroPilot assets mirror
-    return file # Assume it might be provided or handled by the system for now
+    return file
 
 def check_imgsz(imgsz: int | list[int], stride: int = 32, min_dim: int = 2) -> list[int]:
     """Verify image size is a multiple of stride."""
@@ -111,7 +107,6 @@ def check_amp(model):
     try:
         from torch.cuda.amp import autocast
         with autocast():
-             # Basic test
              x = torch.zeros(1, 3, 32, 32).to(device)
              _ = model(x) if not hasattr(model, 'forward_with_kwargs') else model(x)
         return True
@@ -125,7 +120,6 @@ def find_file(file: str | Path) -> str:
     if file.exists():
         return str(file)
 
-    # Search in common directories
     for d in [USER_CONFIG_DIR, Path("cfg")]:
         if (d / file.name).exists():
             return str(d / file.name)
@@ -138,27 +132,23 @@ def check_yaml(file: str | Path) -> str:
     if os.path.isfile(file):
         return file
 
-    # 1. Search locally in relative paths
     if os.path.isfile(os.path.join("cfg", file)):
         return os.path.join("cfg", file)
 
-    # 2. Search in package directory
     import neuro_pilot
     pkg_root = Path(neuro_pilot.__file__).parent
-    
-    # Check cfg/models/ and cfg/ (recursive search for safety)
+
     search_paths = [
         pkg_root / "cfg" / "models",
         pkg_root / "cfg",
     ]
-    
+
     for p in search_paths:
         if (p / file).exists():
             return str(p / file)
         if not file.endswith(".yaml") and (p / (file + ".yaml")).exists():
             return str(p / (file + ".yaml"))
 
-    # 3. Last fallback (original path)
     return file
 
 def print_args(args: dict):

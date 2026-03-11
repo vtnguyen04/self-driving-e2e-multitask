@@ -12,7 +12,7 @@ def non_max_suppression(
     multi_label: bool = False,
     labels=(),
     max_det: int = 300,
-    nc: int = 0,  # number of classes (optional)
+    nc: int = 0,
     max_time_img: float = 0.05,
     max_nms: int = 30000,
     max_wh: int = 7680,
@@ -21,7 +21,6 @@ def non_max_suppression(
     return_idxs: bool = False,
 ):
     """Perform non-maximum suppression (NMS) on prediction results."""
-    # Checks
     assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
     assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
     if isinstance(prediction, (list, tuple)):

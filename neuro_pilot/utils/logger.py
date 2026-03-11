@@ -8,22 +8,12 @@ def set_logger(name="NeuroPilot", save_dir=None, endpoint=None):
     """
     Configure Loguru logger with custom format mimicking Ultralytics.
     """
-    # Remove default handler
     logger.remove()
 
-    # Define Format
-    # Ultralytics style: "2024-01-01 12:00:00 [INFO] NeuroPilot: Message"
-    # But usually just: "Ultralytics YOLOv8.1.0 🚀 Python-3.10.12 torch-2.1.0..."
-    # We want "NeuroPilot 🚀 ... [INFO] Message"
+    fmt = "<level>{message}</level>"
 
-    # Custom format
-    # <green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>NeuroPilot 🚀</cyan> - <level>{message}</level>
-    fmt = "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>NeuroPilot 🚀</cyan> - <level>{message}</level>"
-
-    # Add Console Handler
     logger.add(sys.stderr, format=fmt, level="INFO", colorize=True)
 
-    # Add File Handler if save_dir
     if save_dir:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -35,11 +25,9 @@ def set_logger(name="NeuroPilot", save_dir=None, endpoint=None):
 def log_system_info():
     """Logs system information similar to Ultralytics startup."""
     try:
-        # OS and Python
         os_info = f"{platform.system()} {platform.release()}"
         python_info = f"Python-{platform.python_version()}"
 
-        # PyTorch and CUDA
         torch_info = f"torch-{torch.__version__}"
         cuda_available = torch.cuda.is_available()
         cuda_info = "CUDA:? (Unknown)"
@@ -49,21 +37,44 @@ def log_system_info():
         else:
             cuda_info = "CPU"
 
-        # Memory (Optional, requires psutil which might not be installed)
-        # mem_info = ""
-
         logger.info(f"System: {os_info}")
         logger.info(f"Environment: {python_info} {torch_info} {cuda_info}")
 
     except Exception as e:
         logger.warning(f"Failed to log system info: {e}")
 
-# Initialize logger with default settings
+def colorstr(*args):
+    """
+    Colors a string https://en.wikipedia.org/wiki/ANSI_escape_code.
+    Example:
+        colorstr('blue', 'hello world')
+        colorstr('bold', 'hello world')
+        colorstr('blue', 'bold', 'hello world')
+    """
+    *colors_list, string = args if len(args) > 1 else ("blue", "bold", args[0])
+    colors = {
+        "black": "\033[30m",
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "white": "\033[37m",
+        "bright_black": "\033[90m",
+        "bright_red": "\033[91m",
+        "bright_green": "\033[92m",
+        "bright_yellow": "\033[93m",
+        "bright_blue": "\033[94m",
+        "bright_magenta": "\033[95m",
+        "bright_cyan": "\033[96m",
+        "bright_white": "\033[97m",
+        "end": "\033[0m",
+        "bold": "\033[1m",
+        "underline": "\033[4m",
+    }
+    return "".join(colors[x] for x in colors_list) + f"{string}" + colors["end"]
+
 set_logger()
 
-# Create a default instance
-# To match 'logging.getLogger(__name__)' usage, we can just expose 'logger'
-# But 'logger' is a singleton in loguru.
-# We can just export it.
-
-__all__ = ["logger", "set_logger", "log_system_info"]
+__all__ = ["logger", "set_logger", "log_system_info", "colorstr"]

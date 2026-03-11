@@ -1,11 +1,4 @@
 name: CI
-<<<<<<< HEAD
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-=======
 
 on:
   push:
@@ -13,7 +6,6 @@ on:
   pull_request:
     branches: [ main ]
 
->>>>>>> Debug
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -25,10 +17,7 @@ jobs:
         run: uv python install 3.10
       - name: Lint with ruff
         run: uv run ruff check .
-<<<<<<< HEAD
-=======
 
->>>>>>> Debug
   test:
     runs-on: ubuntu-latest
     steps:
@@ -37,18 +26,5 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
         run: uv python install 3.10
-<<<<<<< HEAD
-=======
-
-      - name: Create Dummy Data
-        run: |
-          mkdir -p data/train/images data/val/images
-          touch data/data.yaml
-          echo 'path: data' > data/data.yaml
-          echo 'train: train/images' >> data/data.yaml
-          echo 'val: val/images' >> data/data.yaml
-          echo 'names: {0: class0}' >> data/data.yaml
-
->>>>>>> Debug
       - name: Run tests
         run: uv run pytest tests/ -v

@@ -65,10 +65,9 @@ class TaskAlignedAssigner(nn.Module):
 
         target_labels, target_bboxes, target_scores = self.get_targets(gt_labels, gt_bboxes, target_gt_idx, fg_mask)
 
-        # Normalize
         align_metric *= mask_pos
-        pos_align_metrics = align_metric.amax(dim=-1, keepdim=True)  # b, max_num_obj
-        pos_overlaps = (overlaps * mask_pos).amax(dim=-1, keepdim=True)  # b, max_num_obj
+        pos_align_metrics = align_metric.amax(dim=-1, keepdim=True)
+        pos_overlaps = (overlaps * mask_pos).amax(dim=-1, keepdim=True)
         norm_align_metric = (align_metric * pos_overlaps / (pos_align_metrics + self.eps)).amax(-2).unsqueeze(-1)
         target_scores = target_scores * norm_align_metric
 
@@ -138,20 +137,14 @@ class TaskAlignedAssigner(nn.Module):
 
     def select_candidates_in_gts(self, xy_centers, gt_bboxes, mask_gt, eps=1e-9):
         """Select positive anchors that are within GT boxes."""
-        # xy_centers: [na, 2] in pixels
-        # gt_bboxes: [bs, n_max_boxes, 4] in pixels
         n_anchors = xy_centers.shape[0]
         bs, n_boxes, _ = gt_bboxes.shape
 
-        # Split GT into left-top and right-bottom
-        lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2) # [bs*n_boxes, 1, 2] each
+        lt, rb = gt_bboxes.view(-1, 1, 4).chunk(2, 2)
 
-        # Calculate distance from anchor center to GT boundaries
-        # centers: [1, na, 2], lt/rb: [bs*n_boxes, 1, 2]
         bbox_deltas = torch.cat((xy_centers[None] - lt, rb - xy_centers[None]), dim=2)
         bbox_deltas = bbox_deltas.view(bs, n_boxes, n_anchors, -1)
 
-        # Anchor is inside if all deltas > 0
         return bbox_deltas.amin(3).gt_(eps)
 
     def select_highest_overlaps(self, mask_pos, overlaps, n_max_boxes, align_metric):

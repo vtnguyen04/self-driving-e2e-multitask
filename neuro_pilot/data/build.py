@@ -33,7 +33,8 @@ class InfiniteDataLoader(DataLoader):
             pass
 
     def reset(self):
-        self.iterator = self._get_iterator()
+        """Restart the internal iterator from the base DataLoader logic."""
+        self.iterator = super().__iter__()
 
 class _RepeatSampler:
     """Sampler that repeats indefinitely."""
@@ -68,7 +69,6 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=Non
     nd = torch.cuda.device_count()
     nw = min(os.cpu_count() // max(nd, 1), workers)
 
-    # Resolve collate_fn if not provided
     if collate_fn is None:
         collate_fn = getattr(dataset, "collate_fn", None)
         if collate_fn is None and hasattr(dataset, "dataset"):

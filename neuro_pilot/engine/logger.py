@@ -25,7 +25,6 @@ class MetricLogger:
         if not self.history:
             return
 
-        # Average metrics from history
         keys = self.history[0].keys()
         summary = {"epoch": epoch, "split": split}
         for k in keys:
@@ -46,5 +45,4 @@ class MetricLogger:
                 writer = csv.DictWriter(f, fieldnames=self.headers)
                 writer.writerow(summary)
 
-        # Clear history for next epoch
         self.history = []

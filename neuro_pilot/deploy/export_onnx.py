@@ -2,9 +2,8 @@ import argparse
 from neuro_pilot.engine.model import NeuroPilot
 
 def export_model(config_path, output_path):
-    # Use the unified API for export
     print("Initializing NeuroPilot for export...")
-    model = NeuroPilot() # Uses check_yaml("neuralPilot.yaml") by default
+    model = NeuroPilot()
 
     print(f"Exporting to {output_path}...")
     model.export(format='onnx', file=output_path, simplify=True)

@@ -40,9 +40,6 @@ class TestE2ETrain(unittest.TestCase):
         with patch('neuro_pilot.data.prepare_dataloaders', return_value=(loader, loader)):
             trainer.setup()
 
-        # Disable TQDM to keep logs clean
-        trainer.pbar = MagicMock()
-
         # Run 1 epoch
         trainer.epoch = 0
 

@@ -56,7 +56,6 @@ class Validator(BaseValidator):
     """
     def __init__(self, config, model, criterion, device):
         super().__init__(config, model, criterion, device)
-        # Helper for decoding
         from neuro_pilot.utils.losses import DetectionLoss
         from neuro_pilot.utils.ops import get_bathtub_weights
         self.decoder = DetectionLoss(model)
@@ -64,7 +63,8 @@ class Validator(BaseValidator):
 
     def init_metrics(self):
         """Initialize metrics and evaluators."""
-        names = getattr(self.model, 'names', None)
+        names = getattr(self, 'names', getattr(self.model, 'names', None))
+        from neuro_pilot.utils.logger import logger as LOGGER
         self.evaluator = DetectionEvaluator(self.cfg.head.num_classes, self.device, self.log_dir, names=names)
         self.total_loss = 0.0
         self.total_l1 = 0.0
@@ -84,10 +84,9 @@ class Validator(BaseValidator):
             gt_boxes = batch['bboxes'].to(self.device)
             gt_classes = batch.get('cls', batch.get('categories')).to(self.device)
 
-            # Inference — use AMP to match training VRAM usage
             with torch.amp.autocast('cuda', enabled=True):
                 preds = self.model(img, cmd=cmd)
-            self.current_output = preds # Expose for callbacks
+            self.current_output = preds
 
             targets = {
                 'waypoints': gt_wp,
@@ -99,16 +98,14 @@ class Validator(BaseValidator):
                 'command_idx': batch.get('command_idx', torch.zeros(img.size(0), dtype=torch.long)).to(self.device),
             }
             batch['targets'] = targets
-            self.current_batch = batch # Expose for callbacks
+            self.current_batch = batch
 
-            # Loss Calculation
             with torch.amp.autocast('cuda', enabled=True):
                 loss_dict = self.criterion.advanced(preds, targets)
             loss_val = loss_dict['total']
             if torch.isfinite(loss_val):
                 self.total_loss += loss_val.item()
 
-            # L1 Calculation (only if trajectory head exists)
             pred_path = preds.get('waypoints', preds.get('control_points'))
             if pred_path is not None:
                 pred_path = pred_path.float()
@@ -120,29 +117,24 @@ class Validator(BaseValidator):
                 l1_err = err_abs.mean().item()
                 self.total_l1 += l1_err
 
-                # Weighted L1
                 T = pred_path.shape[1]
                 w = self.get_bathtub_weights(T, self.cfg.loss.fdat_tau_start, self.cfg.loss.fdat_tau_end, device=self.device)
                 weighted_l1_err = (err_abs.mean(-1) * w).mean().item()
                 self.total_weighted_l1 += weighted_l1_err
 
-            # Metrics Calculation (mAP, CM)
             if 'bboxes' in preds:
-                bboxes = preds['bboxes']  # Decoded boxes
-                pred_bboxes = bboxes[:, :4, :].permute(0, 2, 1)  # (B, A, 4)
-                pred_scores = bboxes[:, 4:, :].permute(0, 2, 1)  # (B, A, NC)
+                bboxes = preds['bboxes']
+                pred_bboxes = bboxes[:, :4, :].permute(0, 2, 1)
+                pred_scores = bboxes[:, 4:, :].permute(0, 2, 1)
             else:
-                continue # Skip detection if no bboxes
+                continue
 
-            # Prepare for Evaluator per image
             formatted_preds = []
             formatted_targets = []
 
-            # Use batch_idx to track which boxes belong to which image
             batch_idx = batch.get('batch_idx', torch.zeros(gt_boxes.shape[0], device=self.device)).view(-1)
 
             for i in range(img.size(0)):
-                # Prediction Handling
                 scores, labels = pred_scores[i].max(dim=1)
                 mask = scores > 0.001
                 k_boxes = pred_bboxes[i][mask]
@@ -151,7 +143,6 @@ class Validator(BaseValidator):
 
                 if k_boxes.numel() > 0:
                     from torchvision.ops import nms
-                    # Convert to xyxy (assuming input is xywh)
                     x1 = k_boxes[:, 0] - k_boxes[:, 2]/2
                     y1 = k_boxes[:, 1] - k_boxes[:, 3]/2
                     x2 = k_boxes[:, 0] + k_boxes[:, 2]/2
@@ -162,7 +153,6 @@ class Validator(BaseValidator):
                 else:
                     formatted_preds.append({'boxes': torch.empty((0, 4), device=self.device), 'scores': torch.tensor([], device=self.device), 'labels': torch.tensor([], device=self.device)})
 
-                # Target Handling (filter by batch_idx)
                 mask_i = (batch_idx == i)
                 t_boxes = gt_boxes[mask_i]
                 t_labels = gt_classes[mask_i]
@@ -170,7 +160,6 @@ class Validator(BaseValidator):
                 if t_boxes.numel() > 0:
                     h, w = img.shape[2], img.shape[3]
                     torch.tensor([w, h, w, h], device=self.device)
-                    # Convert normalized xywh to pixel xyxy
                     tx1 = (t_boxes[:, 0] - t_boxes[:, 2]/2) * w
                     ty1 = (t_boxes[:, 1] - t_boxes[:, 3]/2) * h
                     tx2 = (t_boxes[:, 0] + t_boxes[:, 2]/2) * w
@@ -187,9 +176,14 @@ class Validator(BaseValidator):
         """Final metrics computation and logging."""
         metric_res = self.evaluator.compute()
         self.evaluator.plot_confusion_matrix()
-        metric_res['avg_loss'] = self.total_loss
+        metric_res['avg_loss'] = self.total_loss / max(1, self.batch_idx + 1)
         metric_res['avg_l1'] = self.total_l1 / max(1, self.batch_idx + 1)
         metric_res['avg_weighted_l1'] = self.total_weighted_l1 / max(1, self.batch_idx + 1)
-        metric_res['L1'] = metric_res['avg_l1'] # Unified key for fitness
+        metric_res['L1'] = metric_res['avg_l1']
         metric_res['Weighted_L1'] = metric_res['avg_weighted_l1']
+
+        # Ensure names are passed to trainer for summary
+        if hasattr(self, 'names') and self.names:
+            metric_res['names'] = self.names
+
         return metric_res

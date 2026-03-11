@@ -73,7 +73,6 @@ class Registry:
         if name in cls._LOSSES: return cls._LOSSES[name]
         return None
 
-# Alias for ease of use
 register_backbone = Registry.register_backbone
 register_head = Registry.register_head
 register_loss = Registry.register_loss

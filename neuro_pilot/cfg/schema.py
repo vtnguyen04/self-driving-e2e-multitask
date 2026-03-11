@@ -6,22 +6,21 @@ class BackboneConfig(BaseModel):
     pretrained: bool = True
 
 class HeadConfig(BaseModel):
-    num_control_points: int = 4 # Cubic Bezier (P0, P1, P2, P3)
-    num_waypoints: int = 10     # Number of waypoints sampled from curve
-    num_classes: int = 14       # Max label=13 in dataset
-    num_commands: int = 4       # Number of navigation commands
+    num_control_points: int = 4
+    num_waypoints: int = 10
+    num_classes: int = 14
+    num_commands: int = 4
     anchor_free: bool = True
     skip_heatmap_inference: bool = False
 
 class LossConfig(BaseModel):
-    lambda_traj: float = 1.0
-    lambda_det: float = 0.01
-    lambda_heatmap: float = 0.1
-    lambda_smooth: float = 0.01
-    lambda_cls: float = 1.0
+    lambda_traj: float = 2.0
+    lambda_det: float = 1.0
+    lambda_heatmap: float = 1.0
     lambda_gate: float = 0.5
+    lambda_smooth: float = 0.01
+    lambda_cls: float = 1.05
     use_uncertainty: bool = True
-    # FDAT Loss (Frenet-Decomposed Anisotropic Trajectory Loss)
     use_fdat: bool = False
     fdat_alpha_lane: float = 10.0
     fdat_beta_lane: float = 1.0
@@ -31,7 +30,6 @@ class LossConfig(BaseModel):
     fdat_lambda_endpoint: float = 5.0
     fdat_tau_start: float = 2.0
     fdat_tau_end: float = 2.0
-    # Fitness Weights (Must sum to 1.0 ideally)
     fitness_map50: float = 0.1
     fitness_map95: float = 0.2
     fitness_l1: float = 0.7
@@ -43,8 +41,8 @@ class AugmentConfig(BaseModel):
     scale: float = 0.1
     shear: float = 0.0
     perspective: float = 0.0
-    fliplr: float = 0.0  # Lane following usually doesn't flip L/R easily without label swap
-    color_jitter: float = 0.3  # brightness/contrast
+    fliplr: float = 0.0
+    color_jitter: float = 0.3
     hsv_h: float = 0.015
     hsv_s: float = 0.7
     hsv_v: float = 0.4
@@ -60,7 +58,7 @@ class DataConfig(BaseModel):
     batch_size: int = 32
     num_workers: int = 4
     train_split: float = 0.85
-    dataset_yaml: Optional[str] = None # Path to data.yaml (YOLO style)
+    dataset_yaml: Optional[str] = None
     augment: AugmentConfig = Field(default_factory=AugmentConfig)
 
 class TrainerConfig(BaseModel):
@@ -76,17 +74,15 @@ class TrainerConfig(BaseModel):
     device: str = "cuda"
     resume: Union[bool, str] = False
 
-    # Training configuration
     use_ema: bool = False
     ema_decay: float = 0.999
     lr_schedule: str = "cosine"
-    # Optimization
     checkpoint_top_k: int = 3
-    early_stop_patience: int = 10 # More sensitive early stopping
+    early_stop_patience: int = 100
     use_amp: bool = True
     grad_clip_norm: float = 1.0
     experiment_name: str = "default"
-    cmd_dropout_prob: float = 0.4 # Randomly drop command to force visual learning
+    cmd_dropout_prob: float = 0.4
 
 class AppConfig(BaseModel):
     model_config = ConfigDict(env_prefix="NeuroPilot_")
@@ -110,21 +106,35 @@ def deep_update(mapping, *updating_mappings):
                 updated_mapping[k] = v
     return updated_mapping
 
+def _apply_aliases(cfg: dict) -> dict:
+    """Applies alias mappings to a config dictionary."""
+    mapped_cfg = {}
+    for k, v in cfg.items():
+        if k == "dataset_yaml":
+            mapped_cfg.setdefault("data", {})["dataset_yaml"] = v
+            continue
+        if k == "patience":
+            mapped_cfg.setdefault("trainer", {})["early_stop_patience"] = v
+            continue
+        # If it's a dictionary, recurse
+        if isinstance(v, dict):
+            mapped_cfg[k] = _apply_aliases(v)
+        else:
+            mapped_cfg[k] = v
+    return mapped_cfg
+
 def load_config(config_path: str = None) -> AppConfig:
     import yaml
     from pathlib import Path
 
-    # Start with hardcoded defaults in AppConfig
     config_dict = AppConfig().model_dump()
 
-    # Load from default.yaml if it exists
     default_cfg_path = Path(__file__).parent / "default.yaml"
     if default_cfg_path.exists():
         with open(default_cfg_path, 'r') as f:
             yaml_cfg = yaml.safe_load(f) or {}
             config_dict = deep_update(config_dict, yaml_cfg)
 
-    # Load from user-specified config_path if provided
     if config_path:
         with open(config_path, 'r') as f:
             user_cfg = yaml.safe_load(f) or {}

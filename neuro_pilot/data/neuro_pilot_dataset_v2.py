@@ -13,9 +13,9 @@ class Sample(BaseModel):
     bboxes format: [x_topleft, y_topleft, w, h].
     """
     image_path: str
-    command: int # 0-3
-    waypoints: list[list[float]] # [[x,y], ...] 0-1
-    bboxes: list[list[float]] = [] # [[x, y, w, h], ...] 0-1
+    command: int
+    waypoints: list[list[float]]
+    bboxes: list[list[float]] = []
     categories: list[int] = []
 
 from neuro_pilot.data.augment import StandardAugmentor
@@ -36,16 +36,18 @@ class NeuroPilotDataset(Dataset):
             self.names = []
         elif self.dataset_yaml:
             data = check_dataset(self.dataset_yaml)
-            self.names = data.get('names', [])
+            names = data.get('names', [])
+            if isinstance(names, list):
+                self.names = {i: name for i, name in enumerate(names)}
+            else:
+                self.names = names
             self.samples = self._load_yolo_samples()
         else:
             self.samples = self._load_samples()
             self.names = []
 
-        # Initialize Mosaic Augmentor
         from neuro_pilot.data.augment import Mosaic
         p = getattr(self.transform, 'mosaic_prob', 1.0) if self.split == 'train' else 0.0
-        # Fix: ensure imgsz is integer for Mosaic
         m_imgsz = self.imgsz[0] if isinstance(self.imgsz, tuple) else self.imgsz
         self.mosaic = Mosaic(self, imgsz=m_imgsz, p=p)
 
@@ -55,7 +57,7 @@ class NeuroPilotDataset(Dataset):
             self.transform.close_mosaic()
         if hasattr(self, "mosaic"):
             self.mosaic.p = 0.0
-        logger.info("Dataset: Mosaic augmentation closed.")
+
 
         if self.split == 'train':
             self._inject_robustness_samples()
@@ -116,9 +118,8 @@ class NeuroPilotDataset(Dataset):
             final_wp_norm = []
 
             for c, b, k in zip(cls_all, bboxes_norm, kpts_norm):
-                if c == 98: # Dedicated Trajectory Class
+                if c == 98:
                     if not final_wp_norm:
-                        # Modified: ensure it's a fixed length or tracked
                         step = 3 if len(k) % 3 == 0 and len(k) > 0 else 2
                         for i in range(0, len(k), step):
                             if i + 1 < len(k):
@@ -128,7 +129,6 @@ class NeuroPilotDataset(Dataset):
                 else:
                     final_cls.append(c)
                     final_bboxes_norm.append(b)
-                    # Also extract waypoints if available and not yet found
                     if k and not final_wp_norm:
                         step = 3 if len(k) % 3 == 0 and len(k) > 0 else 2
                         for i in range(0, len(k), step):
@@ -178,6 +178,8 @@ class NeuroPilotDataset(Dataset):
         return loaded_samples
 
     def _inject_robustness_samples(self):
+        if getattr(self, '_robustness_injected', False):
+            return
         import copy
         import random
         aug = []
@@ -187,7 +189,7 @@ class NeuroPilotDataset(Dataset):
                 s_aug.command = random.choice([1, 2])
                 aug.append(s_aug)
         self.samples.extend(aug)
-        logger.info(f"Injected {len(aug)} Robustness Samples.")
+        self._robustness_injected = True
 
     def __len__(self):
         return len(self.samples) - 1 if self.sequence_mode else len(self.samples)
@@ -207,7 +209,6 @@ class NeuroPilotDataset(Dataset):
 
         img = cv2.imread(str(img_path))
         if img is None:
-            # Revert to integer imgsz if needed for safety
             s = self.imgsz[0] if isinstance(self.imgsz, tuple) else self.imgsz
             img = np.zeros((s, s, 3), dtype=np.uint8)
 
@@ -233,45 +234,38 @@ class NeuroPilotDataset(Dataset):
         }
 
     def __getitem__(self, idx):
-        # Mosaic Augmentation (Stage 1 only)
         if self.mosaic.p > 0:
             data = self.mosaic(self.get_image_and_label(idx))
-            sample = self.samples[idx] # Keep primary sample metadata
+            sample = self.samples[idx]
         else:
             sample = self.samples[idx]
             data = self.get_image_and_label(idx)
 
-        # LetterBox: Maintain Aspect Ratio
         from neuro_pilot.data.augment import LetterBox
         lb = LetterBox(new_shape=self.imgsz, auto=False, scaleup=True)
         data = lb(data)
 
-        # Apply additional transformations if any
         if self.transform:
-            data = self.transform(data) # Apply transform on letterboxed data
+            data = self.transform(data)
             wp_aug = data['waypoints']
-            bx_aug = data['bboxes']  # Pascal VOC (xyxy pixels)
-            cls_t = data['cls'] # Synchronized 'cls'
+            bx_aug = data['bboxes']
+            cls_t = data['cls']
         else:
             wp_aug, bx_aug, cls_t = data['waypoints'], data['bboxes'], data['cls']
 
-        # Convert BGR to RGB and Normalize
         img_rgb = cv2.cvtColor(data['img'], cv2.COLOR_BGR2RGB)
         img_t = torch.from_numpy(img_rgb).permute(2, 0, 1).float() / 255.0
 
-        # Apply ImageNet Normalization manually
         mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
         img_t = (img_t - mean) / std
 
-        # Use final image dimensions for normalization
         _, h_final, w_final = img_t.shape
 
-        # Normalize Waypoints to [-1, 1] range
         wp_mask_val = 1.0
         if len(wp_aug) > 0:
             wp_t = torch.tensor(wp_aug, dtype=torch.float32)
-            if wp_t.ndim == 1: wp_t = wp_t.unsqueeze(0) # Handle single point case
+            if wp_t.ndim == 1: wp_t = wp_t.unsqueeze(0)
             wp_t[..., 0] = (wp_t[..., 0] / (w_final / 2.0)) - 1.0
             wp_t[..., 1] = (wp_t[..., 1] / (h_final / 2.0)) - 1.0
             wp_t = torch.clamp(wp_t, -1.0, 1.0)
@@ -279,7 +273,6 @@ class NeuroPilotDataset(Dataset):
             wp_t = torch.zeros((0, 2), dtype=torch.float32)
             wp_mask_val = 0.0
 
-        # Normalize BBoxes to [0, 1] range [cx, cy, w, h]
         bboxes_t = []
         for b in bx_aug:
             x1, y1, x2, y2 = b
@@ -294,7 +287,6 @@ class NeuroPilotDataset(Dataset):
 
         cmd_onehot = torch.zeros(4); cmd_onehot[sample.command] = 1.0
 
-        # Heatmap based on target resolution
         hm_h, hm_w = h_final // 4, w_final // 4
         heatmap = torch.zeros((hm_h, hm_w))
         if wp_mask_val > 0.5:
@@ -319,12 +311,10 @@ def custom_collate_fn(batch):
     collated['image_path'] = [b['image_path'] for b in batch]
     collated['command'] = torch.stack([b['command'] for b in batch])
     collated['command_idx'] = torch.tensor([b['command_idx'] for b in batch])
-    # Robust Waypoint Handling (Ensuring fixed length 10 for stacking)
     collated_wp = []
     for b in batch:
         wp = b['waypoints']
         if wp.shape[0] != 10:
-            # Pad or truncate to 10
             padded_wp = torch.zeros((10, 2), dtype=wp.dtype, device=wp.device)
             if wp.shape[0] > 0:
                 n = min(wp.shape[0], 10)
@@ -334,7 +324,6 @@ def custom_collate_fn(batch):
             collated_wp.append(wp)
     collated['waypoints'] = torch.stack(collated_wp)
 
-    # Handle waypoints_mask
     if 'waypoints_mask' in batch[0]:
         collated['waypoints_mask'] = torch.stack([b['waypoints_mask'] for b in batch])
 
@@ -349,7 +338,6 @@ def custom_collate_fn(batch):
             batch_cls.append(b['categories'].view(-1, 1) if 'categories' in b else b['cls'].view(-1, 1))
             batch_idx_bboxes.append(torch.full((b['bboxes'].shape[0], 1), i, dtype=torch.float32))
 
-        # Waypoints index tracking
         if b['waypoints'].shape[0] > 0:
             batch_idx_waypoints.append(torch.full((b['waypoints'].shape[0], 1), i, dtype=torch.float32))
 
@@ -381,13 +369,10 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
     tr_pipe = StandardAugmentor(training=use_aug, imgsz=config.data.image_size, config=config.data.augment)
     val_pipe = StandardAugmentor(training=False, imgsz=config.data.image_size)
 
-    # Load Train
     tr_ds = NeuroPilotDataset(root_dir=root_dir, transform=tr_pipe, dataset_yaml=config.data.dataset_yaml, split='train', imgsz=config.data.image_size)
 
-    # Load Val
     val_ds = NeuroPilotDataset(root_dir=root_dir, transform=val_pipe, dataset_yaml=config.data.dataset_yaml, split='val', imgsz=config.data.image_size)
 
-    # Fallback to random_split only if val_ds is empty and train_split < 1.0
     if len(val_ds) == 0 and config.data.train_split < 1.0:
         from torch.utils.data import random_split
         tr_size = int(len(tr_ds) * config.data.train_split)

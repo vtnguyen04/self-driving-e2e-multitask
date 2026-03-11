@@ -18,25 +18,25 @@ __all__ = ["Detect", "v10Detect", "HeatmapHead", "TrajectoryHead", "BaseHead", "
 
 class Detect(BaseHead):
     """YOLO Detect head for object detection models."""
-    dynamic = False  # force grid reconstruction
-    export = False  # export mode
-    format = None  # export format
-    max_det = 300  # max_det
+    dynamic = False
+    export = False
+    format = None
+    max_det = 300
     agnostic_nms = False
     shape = None
-    anchors = torch.empty(0)  # init
-    strides = torch.empty(0)  # init
-    legacy = False  # backward compatibility for v3/v5/v8/v9 models
-    xyxy = False  # xyxy or xywh output
+    anchors = torch.empty(0)
+    strides = torch.empty(0)
+    legacy = False
+    xyxy = False
 
     def __init__(self, ch: tuple = (), nc: int = 80, reg_max=16, end2end=False):
         super().__init__()
-        self.nc = nc  # number of classes
-        self.nl = len(ch)  # number of detection layers
-        self.reg_max = reg_max  # DFL channels
-        self.no = nc + self.reg_max * 4  # number of outputs per anchor
-        self.stride = torch.zeros(self.nl)  # strides computed during build
-        c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
+        self.nc = nc
+        self.nl = len(ch)
+        self.reg_max = reg_max
+        self.no = nc + self.reg_max * 4
+        self.stride = torch.zeros(self.nl)
+        c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))
         self.cv2 = nn.ModuleList(
             nn.Sequential(Conv(x, c2, 3), Conv(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
         )
@@ -58,7 +58,6 @@ class Detect(BaseHead):
             self.one2one_cv2 = copy.deepcopy(self.cv2)
             self.one2one_cv3 = copy.deepcopy(self.cv3)
 
-    # Properties
     @property
     def one2many(self):
         return dict(box_head=self.cv2, cls_head=self.cv3)
@@ -84,14 +83,12 @@ class Detect(BaseHead):
         return dict(boxes=boxes, scores=scores, feats=x)
 
     def forward(self, x: list[torch.Tensor]):
-        shape = x[0].shape  # BCHW
+        shape = x[0].shape
         shape[0]
 
-        # Process each feature map
         one2many_preds = self.forward_head(x, **self.one2many)
 
         if self.training:
-            # For training, we return the raw outputs for the loss function
             res = {"one2many": one2many_preds, "detect": {"one2many": one2many_preds}}
             if self.end2end:
                 x_detach = [xi.detach() for xi in x]
@@ -99,27 +96,21 @@ class Detect(BaseHead):
                 res["one2one"] = one2one_preds
                 res["detect"]["one2one"] = one2one_preds
 
-            # Ensure 'feats' is available for loss calculation
             res['detect']['feats'] = x
             return res
 
-        # INFERENCE
-        # Re-organize raw predictions
         x[0].shape[0]
         box_preds = one2many_preds['boxes']
         score_preds = one2many_preds['scores']
 
-        # Decode boxes
         if self.dynamic or self.shape != x[0].shape:
             self.anchors, self.strides = (a.transpose(0, 1) for a in make_anchors(x, self.stride, 0.5))
             self.shape = x[0].shape
 
-        # Apply DFL
         decoded_boxes = self.decode_bboxes(self.dfl(box_preds), self.anchors.unsqueeze(0)) * self.strides.unsqueeze(0)
 
         y = torch.cat((decoded_boxes, score_preds.sigmoid()), 1)
 
-        # Standardized output
         res = {
             "bboxes": y,
             "boxes": one2many_preds['boxes'],
@@ -132,13 +123,10 @@ class Detect(BaseHead):
         """Decode bounding boxes from distance format."""
         return dist2bbox(bboxes, anchors, xywh=True, dim=1)
 
-
     def bias_init(self):
         """Initialize Detect() biases, standard YOLO procedure."""
         for i, (a, b) in enumerate(zip(self.one2many["box_head"], self.one2many["cls_head"])):
-            a[-1].bias.data[:] = 2.0  # box (standard Ultralytics)
-            # YOLO bias init: log(freq / (1-freq)) or log(5 / nc / (640 / stride)^2)
-            # This ensures confidence starts very low (~0.01)
+            a[-1].bias.data[:] = 2.0
             b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
         if self.end2end:
             for i, (a, b) in enumerate(zip(self.one2one["box_head"], self.one2one["cls_head"])):
@@ -185,7 +173,6 @@ class HeatmapHead(BaseHead):
         c2_dim = ch_in[1] if isinstance(ch_in, (list, tuple)) and len(ch_in) > 1 else c3_dim
         self.num_upsample = num_upsample
 
-        # Stage 1: P3 (stride 8) → stride 4 with C2 skip connection
         self.gate_c2 = AttentionGate(F_g=c3_dim, F_l=c2_dim, F_int=hidden_dim)
         self.up_p3_to_p2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
@@ -193,7 +180,6 @@ class HeatmapHead(BaseHead):
         )
         self.fuse_s1 = C3k2(hidden_dim + c2_dim, hidden_dim, n=1)
 
-        # Stage 2: stride 4 → stride 2 (learned upsample + refine)
         if num_upsample >= 2:
             self.up_s2 = nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, kernel_size=2, stride=2)
             self.refine_s2 = C3k2(hidden_dim // 2, hidden_dim // 2, n=1)
@@ -201,7 +187,6 @@ class HeatmapHead(BaseHead):
         else:
             s2_out = hidden_dim
 
-        # Stage 3: stride 2 → stride 1 (learned upsample + lightweight refine)
         if num_upsample >= 3:
             self.up_s3 = nn.ConvTranspose2d(s2_out, s2_out // 2, kernel_size=2, stride=2)
             self.refine_s3 = nn.Sequential(Conv(s2_out // 2, s2_out // 2, 3, 1))
@@ -209,7 +194,6 @@ class HeatmapHead(BaseHead):
         else:
             final_ch = s2_out
 
-        # Output: 1×1 conv producing logits (no activation)
         self.head = nn.Sequential(
             Conv(final_ch, max(final_ch // 2, 16), 3, 1),
             nn.Conv2d(max(final_ch // 2, 16), ch_out, 1),
@@ -222,17 +206,14 @@ class HeatmapHead(BaseHead):
         else:
             p3 = c2 = x
 
-        # Stage 1: P3→stride 4, gated skip with C2
         gated_c2 = self.gate_c2(p3, c2)
         p3_up = self.up_p3_to_p2(p3)
         h = self.fuse_s1(torch.cat([p3_up, gated_c2], dim=1))
 
-        # Stage 2: stride 4→stride 2
         if self.num_upsample >= 2:
             h = F.silu(self.up_s2(h))
             h = self.refine_s2(h)
 
-        # Stage 3: stride 2→stride 1
         if self.num_upsample >= 3:
             h = F.silu(self.up_s3(h))
             h = self.refine_s3(h)
@@ -251,49 +232,41 @@ class TrajectoryHead(BaseHead):
         self.num_commands = num_commands
         self.num_waypoints = num_waypoints
 
-        # FiLM Generator: Command -> (Gamma, Beta)
         self.cmd_embed = nn.Embedding(num_commands, 64)
         self.film_gen = nn.Sequential(
             nn.Linear(64, 256),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 1024) # 512 for gamma, 512 for beta
+            nn.Linear(256, 1024)
         )
 
-        # Spatial Awareness Pool - Use interpolate for better ONNX compatibility
-        # self.spatial_pool = nn.AdaptiveAvgPool2d((4, 4))
         flatten_dim = self.c5_dim * 4 * 4
 
-        # STEM: Concatenate command embedding initially
         self.vision_stem = nn.Sequential(
             nn.Linear(flatten_dim + 64, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(inplace=True)
         )
 
-        # FINAL: Predict 4 control points
         self.traj_head = nn.Sequential(
             nn.Linear(512, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 4 * 2) # 4 Control Points (x, y)
+            nn.Linear(512, 4 * 2)
         )
 
-        # Predict existence/confidence of trajectory (navigable vs roadblock)
         self.exist_head = nn.Sequential(
             nn.Linear(512, 1)
         )
 
-        # Bezier/Bernstein Registration
         t = torch.linspace(0, 1, num_waypoints)
-        self.register_buffer('bernstein_m', self._compute_bernstein_matrix(t)) # [T, 4]
+        self.register_buffer('bernstein_m', self._compute_bernstein_matrix(t))
 
     def _compute_bernstein_matrix(self, t):
-        # Cubic Bezier (4 control points)
         b0 = (1 - t) ** 3
         b1 = 3 * (1 - t) ** 2 * t
         b2 = 3 * (1 - t) * t ** 2
         b3 = t ** 3
-        return torch.stack([b0, b1, b2, b3], dim=1) # [T, 4]
+        return torch.stack([b0, b1, b2, b3], dim=1)
 
     def forward(self, x, **kwargs):
         cmd_idx = kwargs.get('cmd', kwargs.get('cmd_idx'))
@@ -303,7 +276,6 @@ class TrajectoryHead(BaseHead):
         B = p5.shape[0]
         if cmd_idx is None: cmd_idx = torch.zeros(B, dtype=torch.long, device=p5.device)
 
-        # Feature Integration with Heatmap (Residual)
         if heatmap is not None:
             if isinstance(heatmap, dict): heatmap = heatmap.get('heatmap')
             mask = F.interpolate(torch.sigmoid(heatmap), size=p5.shape[2:], mode='bilinear', align_corners=False)
@@ -311,33 +283,26 @@ class TrajectoryHead(BaseHead):
         else:
             feat = p5
 
-        # Vision + Command Concatenation
-        # Using F.interpolate for better ONNX compatibility
-        # Ensure cmd_idx is 1D [B] even if passed as [B, 1] or one-hot
         if cmd_idx.dim() > 1:
-            if cmd_idx.shape[-1] == self.num_commands: # One-hot
+            if cmd_idx.shape[-1] == self.num_commands:
                 cmd_idx = cmd_idx.argmax(dim=-1)
             else:
                 cmd_idx = cmd_idx.view(-1)
 
-        # Vision + Command Integration - Ensure same dtype for concatenation
         dtype = self.vision_stem[0].weight.dtype
         cmd_emb = self.cmd_embed(cmd_idx.long()).to(dtype)
         pooled = F.interpolate(feat, size=(4, 4), mode='bilinear', align_corners=False).flatten(1).to(dtype)
 
-        combined = torch.cat([pooled, cmd_emb], dim=1) # [B, flatten_dim + 64]
+        combined = torch.cat([pooled, cmd_emb], dim=1)
 
-        # 2.5 STEM processing
         for layer in self.vision_stem:
             combined = layer(combined)
             if torch.is_floating_point(combined):
                 combined = combined.to(dtype)
         h = combined
 
-        # FiLM Generator + Modulation
         h = self._apply_film(h, cmd_emb.to(self.film_gen[0].weight.dtype))
 
-        # Predict Control Points
         h_traj = h
         for layer in self.traj_head:
             h_traj = layer(h_traj)
@@ -345,18 +310,15 @@ class TrajectoryHead(BaseHead):
                 h_traj = h_traj.to(dtype)
         cp = torch.tanh(h_traj).view(B, 4, 2)
 
-        # Predict Trajectory Existence (Logits)
         h_exist = h
         for layer in self.exist_head:
             h_exist = layer(h_exist)
             if torch.is_floating_point(h_exist):
                 h_exist = h_exist.to(dtype)
-        has_traj_logit = h_exist # [B, 1]
+        has_traj_logit = h_exist
 
-        # Bezier Interpolation (Bernstein)
         waypoints = torch.einsum('nk,bkd->bnd', self.bernstein_m.to(cp.dtype), cp)
 
-        # Safety
         waypoints = torch.nan_to_num(waypoints, 0.0)
 
         res = {'waypoints': waypoints, 'control_points': cp, 'has_traj_logit': has_traj_logit}
@@ -374,9 +336,9 @@ class Segment(Detect):
     def __init__(self, ch: tuple = (), nc: int = 80, nm: int = 32, npr: int = 256, reg_max=16, end2end=False):
         """Initialize segmentation head with masks and prototypes."""
         super().__init__(ch, nc, reg_max, end2end)
-        self.nm = nm  # number of masks
-        self.npr = npr  # number of protos
-        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
+        self.nm = nm
+        self.npr = npr
+        self.proto = Proto(ch[0], self.npr, self.nm)
         c4 = max(ch[0] // 4, self.nm)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
         if end2end:
@@ -405,7 +367,6 @@ class Segment(Detect):
         proto = self.proto(x[0])
         preds = super().forward(x)
 
-        # Inject proto into output
         if self.end2end:
             preds["one2many"]["proto"] = proto
             preds["one2one"]["proto"] = proto.detach()
@@ -436,11 +397,9 @@ class ClassificationHead(nn.Module):
     def forward(self, x):
         if isinstance(x, (list, tuple)): x = x[-1]
 
-        # Ensure dtype alignment with weights
         dtype = self.conv[0].weight.dtype
         x = self.pool(x).flatten(1).to(dtype)
 
-        # Manual iteration for dtype stability (BatchNorm promotion fix)
         for layer in self.conv:
             x = layer(x)
             if torch.is_floating_point(x):

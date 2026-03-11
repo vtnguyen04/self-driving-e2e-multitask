@@ -90,19 +90,14 @@ class LoggingCallback(Callback):
         self.logger.reset()
 
     def on_batch_end(self, trainer):
-        # trainer.metrics contains the latest batch metrics
         if hasattr(trainer, 'batch_metrics'):
             self.logger.log_batch(trainer.batch_metrics)
-            if trainer.pbar:
-                # Update tqdm description
-                trainer.pbar.set_postfix(**trainer.batch_metrics)
 
     def on_epoch_end(self, trainer):
         self.logger.log_epoch(trainer.epoch, split="train")
 
     def on_val_end(self, trainer):
-        # trainer.val_metrics should be populated
-        pass # Validation logging usually handled by Val Loop or ValCallback
+        pass
 
 class CheckpointCallback(Callback):
     """Handles Model Checkpointing (Best/Last)."""
@@ -112,19 +107,19 @@ class CheckpointCallback(Callback):
         self.best_fitness = -float('inf')
 
     def on_val_end(self, trainer):
-        if not hasattr(trainer, 'save_checkpoint'): return
-        # trainer.fitness should be populated by validator or trainer
+        if not hasattr(trainer, 'save_checkpoint'):
+            return
+
         fitness = getattr(trainer, 'fitness', 0.0)
-        # Fallback to inverse loss if fitness not defined
         if fitness == 0.0 and hasattr(trainer, 'val_loss'):
             fitness = -trainer.val_loss
 
         is_best = fitness > self.best_fitness
         if is_best:
             self.best_fitness = fitness
+            logger.info(f"✨ New best fitness: {fitness:.4f}")
 
-        # Save Last (and Best if is_best=True)
-        # Using trainer's paths which are already set to last.pt/best.pt in weights/
+        # Ensure last.pt is ALWAYS saved
         trainer.save_checkpoint(trainer.last, fitness, is_best=is_best)
 
 class VisualizationCallback(Callback):
@@ -139,10 +134,9 @@ class VisualizationCallback(Callback):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         self.plt = plt
-        self.names = {} # Dictionary of class index to name
+        self.names = {}
 
     def _denormalize(self, img_tensor):
-        # Assumes ImageNet normalization
         mean = torch.tensor([0.485, 0.456, 0.406], device=img_tensor.device).view(1, 3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225], device=img_tensor.device).view(1, 3, 1, 1)
         return img_tensor * std + mean
@@ -153,16 +147,6 @@ class VisualizationCallback(Callback):
 
         from neuro_pilot.utils.plotting import visualize_batch
 
-        # Prepare batch dict
-        # current_batch keys: image, cmd, waypoints, bboxes, ...
-        # Ensure targets combines everything nicely
-        # Trainer stores 'targets' in current_batch usually?
-        # Let's check Trainer.train_one_epoch
-        # self.current_batch = {'image': img, 'cmd': cmd, 'targets': targets}
-        # And targets = {'waypoints': gt, 'bboxes': ...}
-
-        # So structure is compatible.
-
         visualize_batch(
             trainer.current_batch,
             trainer.current_output,
@@ -171,12 +155,10 @@ class VisualizationCallback(Callback):
         )
 
     def on_batch_end(self, trainer):
-        # Visualize first 3 batches every epoch
         if hasattr(trainer, 'batch_idx') and trainer.batch_idx in (0, 1, 2):
              self.visualize_batch(trainer, trainer.batch_idx, "train")
 
     def on_val_batch_end(self, validator):
-        # Visualize first 3 batches of validation
         if hasattr(validator, 'batch_idx') and validator.batch_idx in (0, 1, 2):
              self.visualize_batch(validator, validator.batch_idx, "val")
 
@@ -198,7 +180,6 @@ class PlottingCallback(Callback):
     def _plot(self):
         if self.pd is None:
             return
-        # Load CSVs
         train_csv = self.log_dir / "train_metrics.csv"
         val_csv = self.log_dir / "val_metrics.csv"
 
@@ -210,13 +191,11 @@ class PlottingCallback(Callback):
         except Exception:
             return
 
-        # Identify metrics to plot (exclude epoch, mode)
         exclude = ['epoch', 'mode']
         metrics = [c for c in df_t.select_dtypes(include=['number']).columns if c not in exclude]
 
         if not metrics: return
 
-        # Grid Size
         n_metrics = len(metrics)
         n_cols = 3
         n_rows = (n_metrics + n_cols - 1) // n_cols
@@ -227,17 +206,14 @@ class PlottingCallback(Callback):
         else:
             axes = [axes]
 
-        # Aggregate Train by Epoch
         numeric_cols = df_t.select_dtypes(include=['number']).columns
         df_t_ep = df_t[numeric_cols].groupby('epoch').mean()
 
         for i, metric in enumerate(metrics):
             ax = axes[i]
-            # Train
             if metric in df_t_ep.columns:
                 ax.plot(df_t_ep.index, df_t_ep[metric], label='Train', marker='.', color='blue')
 
-            # Val
             if not df_v.empty and metric in df_v.columns:
                 ax.plot(df_v['epoch'], df_v[metric], label='Val', marker='.', color='orange')
 
@@ -246,7 +222,6 @@ class PlottingCallback(Callback):
             ax.grid(True, alpha=0.3)
             ax.legend()
 
-        # Hide unused axes
         for i in range(n_metrics, len(axes)):
             axes[i].axis('off')
 

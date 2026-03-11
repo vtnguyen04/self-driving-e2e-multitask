@@ -8,12 +8,10 @@ import time
 from functools import lru_cache
 from typing import IO, Any
 
-
 @lru_cache(maxsize=1)
 def is_noninteractive_console() -> bool:
     """Check for known non-interactive console environments."""
     return "GITHUB_ACTIONS" in os.environ or "RUNPOD_POD_ID" in os.environ
-
 
 class TQDM:
     """Lightweight zero-dependency progress bar for NeuroPilot (adapted from Ultralytics).
@@ -21,11 +19,10 @@ class TQDM:
     Provides clean, rich-style progress bars suitable for various environments.
     """
 
-    # Constants
-    MIN_RATE_CALC_INTERVAL = 0.01  # Minimum time interval for rate calculation
-    RATE_SMOOTHING_FACTOR = 0.3  # Factor for exponential smoothing of rates
-    MAX_SMOOTHED_RATE = 1000000  # Maximum rate to apply smoothing to
-    NONINTERACTIVE_MIN_INTERVAL = 60.0  # Minimum interval for non-interactive environments
+    MIN_RATE_CALC_INTERVAL = 0.01
+    RATE_SMOOTHING_FACTOR = 0.3
+    MAX_SMOOTHED_RATE = 1000000
+    NONINTERACTIVE_MIN_INTERVAL = 60.0
 
     def __init__(
         self,
@@ -39,13 +36,12 @@ class TQDM:
         unit: str = "it",
         unit_scale: bool = True,
         unit_divisor: int = 1000,
-        bar_format: str | None = None,  # kept for API compatibility; not used for formatting
+        bar_format: str | None = None,
         initial: int = 0,
         ncols: int | None = None,
         **kwargs,
     ) -> None:
         """Initialize the TQDM progress bar."""
-        # Disable if not verbose
         if disable is None:
             disable = False
 
@@ -65,7 +61,6 @@ class TQDM:
         self.bar_format = bar_format
         self.file = file or sys.stdout
 
-        # Internal state
         self.n = self.initial
         self.last_print_n = self.initial
         self.last_print_t = time.time()
@@ -195,22 +190,26 @@ class TQDM:
         rate_str = self._format_rate(rate) or (self._format_rate(self.n / elapsed) if elapsed > 0 else "")
 
         bar = self._generate_bar()
+        l_bar = f"{self.desc}: {percent:.0f}%" if self.total else f"{self.desc}"
+        postfix = getattr(self, 'postfix_str', '')
+        r_bar = f"{n_str}/{t_str} {rate_str:>7} {elapsed_str:>5}{remaining_str:<6} {postfix}"
 
-        if self.total:
-            if self.is_bytes and self.n >= self.total:
-                progress_str = f"{self.desc}: {percent:.0f}% {bar} {t_str} {rate_str} {elapsed_str}"
-            else:
-                progress_str = (
-                    f"{self.desc}: {percent:.0f}% {bar} {n_str}/{t_str} {rate_str} {elapsed_str}{remaining_str}"
-                )
+        if self.bar_format:
+            # Expand format keys to support granular layout
+            progress_str = self.bar_format.format(
+                l_bar=l_bar, bar=bar, r_bar=r_bar,
+                desc=self.desc, postfix=postfix, percent=f"{percent:.0f}%",
+                n_str=n_str, t_str=t_str, rate_str=rate_str,
+                elapsed_str=elapsed_str, remaining_str=remaining_str
+            )
         else:
-            progress_str = f"{self.desc}: {bar} {n_str} {rate_str} {elapsed_str}"
+            progress_str = f"{l_bar} {bar} {r_bar}"
 
-        # FIX: Ensure it doesn't exceed terminal width to avoid wrapping/duplication
         ncols_term = self._get_ncols()
         ncols_to_use = min(self.ncols, ncols_term) if self.ncols else ncols_term
         if len(progress_str) > ncols_to_use - 1:
-            progress_str = progress_str[:ncols_to_use-4] + "..."
+            if ncols_to_use > 20:
+                progress_str = progress_str[:ncols_to_use-4] + "..."
 
         try:
             if self.noninteractive:
@@ -234,15 +233,19 @@ class TQDM:
             self._display()
 
     def set_postfix(self, **kwargs: Any) -> None:
-        """Set postfix (appends to description)."""
+        """Set postfix string."""
         if kwargs:
-            # Shorten values for display
             def format_val(v):
                 if isinstance(v, float): return f"{v:.4g}"
                 return str(v)
-            postfix = ", ".join(f"{k}={format_val(v)}" for k, v in kwargs.items())
-            base_desc = self.desc.split(" | ")[0] if " | " in self.desc else self.desc
-            self.set_description(f"{base_desc} | {postfix}")
+            postfix = " ".join(f"{k}={format_val(v)}" for k, v in kwargs.items())
+            self.set_postfix_str(postfix)
+
+    def set_postfix_str(self, s: str = "", refresh: bool = True) -> None:
+        """Set postfix string."""
+        self.postfix_str = s
+        if refresh and not self.disable:
+            self._display()
 
     def close(self) -> None:
         """Close progress bar."""

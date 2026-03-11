@@ -25,7 +25,6 @@ class Bboxes:
             elif format == "ltwh": self.bboxes = xyxy2ltwh(self.bboxes)
         elif self.format == "xywh":
             if format == "xyxy": self.bboxes = xywh2xyxy(self.bboxes)
-            # Add others if needed
         elif self.format == "ltwh":
             if format == "xyxy": self.bboxes = ltwh2xyxy(self.bboxes)
 
@@ -35,7 +34,7 @@ class Bboxes:
         """Calculate areas of all boxes."""
         if self.format == "xyxy":
             return (self.bboxes[:, 2] - self.bboxes[:, 0]) * (self.bboxes[:, 3] - self.bboxes[:, 1])
-        return self.bboxes[:, 2] * self.bboxes[:, 3] # xywh or ltwh
+        return self.bboxes[:, 2] * self.bboxes[:, 3]
 
     def scale(self, w_scale: float, h_scale: float):
         """Scale all boxes."""

@@ -8,13 +8,9 @@ from neuro_pilot.nn.modules import *
 from neuro_pilot.nn.modules.head import ClassificationHead
 import importlib
 
-
-# Safe mapping of allowed module/class names to objects to avoid eval()
 _SAFE_MAP = {
-    # Basic torch modules
     "Identity": nn.Identity,
     "Upsample": nn.Upsample,
-    # Project modules (imported via wildcard above)
     "Conv": Conv,
     "Bottleneck": Bottleneck,
     "C3k2": C3k2,
@@ -37,18 +33,12 @@ _SAFE_MAP = {
     "LanguagePromptEncoder": LanguagePromptEncoder,
 }
 
-
-# Auto-extend `_SAFE_MAP` with any nn.Module subclasses present in this module's
-# globals (e.g., classes imported via `from neuro_pilot.nn.modules import *`).
-# This makes the mapping resilient to added modules without requiring manual updates.
 for _name, _obj in list(globals().items()):
     try:
         if isinstance(_obj, type) and issubclass(_obj, nn.Module):
             _SAFE_MAP.setdefault(_name, _obj)
     except Exception:
-        # ignore non-class objects or other issues
         pass
-
 
 def _resolve_module(m_name):
     """Resolve module/class by name safely.
@@ -69,11 +59,9 @@ def _resolve_module(m_name):
         try:
             mod = importlib.import_module(module_name)
         except ModuleNotFoundError:
-            # Fallback
             mod = importlib.import_module(f"torch.{module_name}")
         return getattr(mod, attr)
     raise ImportError(f"Unknown module name: {m_name}")
-
 
 def _substitute_args(args, nc, nm, nw):
     if not isinstance(args, list):
@@ -93,27 +81,24 @@ def _substitute_args(args, nc, nm, nw):
             args[j] = False
     return args
 
-
 def _scale_depth(n, gd):
     return max(round(n * gd), 1) if n > 1 else n
-
 
 def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
     """Handle module-specific argument/channel logic. Returns (c2, args, n)."""
     c2 = None
-    # Convolution-like modules
     if m in {Conv, Bottleneck, C3k2, SPPF, C2f, C3, C3k, C2PSA}:
         c1, c2 = ch[f], args[0]
         if isinstance(c1, list):
             c1 = c1[-1]
-        if c2 != nc:  # if not output
+        if c2 != nc:
             c2 = make_divisible(c2 * gw, 8)
         args = [c1, c2, *args[1:]]
         if m in {C3k2, C2f, C3, C3k, C2PSA}:
-            args.insert(2, n)  # number of bottlenecks
+            args.insert(2, n)
             n = 1
     elif m is nn.Upsample:
-        c2 = ch[f]  # Upsample preserves channel count
+        c2 = ch[f]
         if len(args) == 2:
             args = [None, args[0], args[1]]
     elif m.__name__ == "TimmBackbone":
@@ -163,25 +148,21 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
         args = [plan_ch, percept_ch, heads]
         c2 = plan_ch
     elif m.__name__ == "LanguagePromptEncoder":
-        c2 = args[0] # embed_dim IS a channel count, should be scaled
+        c2 = args[0]
         c2 = make_divisible(c2 * gw, 8)
         args[0] = c2
-        # nm (args[1]) should NOT be scaled as it is a category count
 
-
-    # Default c2 resolution
     if c2 is None:
         c2 = ch[f] if isinstance(f, int) else ch[f[0]]
 
     return c2, args, n
-
 
 def parse_model(d, ch):
     """Parse a NeuroPilot model dict into a PyTorch model."""
     logger.info(
         f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}"
     )
-    scale = d.get("scale", "n")  # Default to 'n' if not specified
+    scale = d.get("scale", "n")
     if "scales" in d:
         if scale not in d["scales"]:
             logger.warning(
@@ -201,37 +182,30 @@ def parse_model(d, ch):
     for i, (f, n, m_name, args) in enumerate(d["backbone"] + d["head"]):
         m = _resolve_module(m_name)
 
-        # Arg substitution and normalization
         args = _substitute_args(args, nc, nm, nw)
 
-        # Depth scaling
         n_ = n
         n = _scale_depth(n, gd)
 
-        # Resolve f relative to i for channel discovery (e.g. -1 means i-1)
         f_res = [x + i if x < 0 else x for x in (f if isinstance(f, list) else [f])]
         f_res = f_res[0] if not isinstance(f, list) else f_res
 
-        # Module-specific handling (channels, args, etc.)
         c2, args, n = _handle_module_specials(m, f_res, n, args, c1_map, nc, gw, d, layers, scale)
 
-        # Instantiate module(s)
         m_ = nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)
         t = str(m)[8:-2].replace("__main__.", "")
         m_.i, m_.f, m_.type, m_.np = i, f, t, sum(x.numel() for x in m_.parameters())
         logger.info(f"{i:>3}{str(f):>18}{n_:>3}{m_.np:>10}  {t:<40}{str(args):<30}")
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
         layers.append(m_)
-        c1_map[i] = c2 # Register layer output
+        c1_map[i] = c2
     return nn.Sequential(*layers), sorted(save)
-
 
 def make_divisible(x, divisor):
     """Returns nearest x divisible by divisor."""
     if isinstance(divisor, torch.Tensor):
-        divisor = int(divisor.max())  # to resolve deterministic issue
+        divisor = int(divisor.max())
     return math.ceil(x / divisor) * divisor
-
 
 class DetectionModel(nn.Module):
     """Detection Model."""
@@ -244,6 +218,7 @@ class DetectionModel(nn.Module):
         scale="n",
         verbose=True,
         skip_heatmap_inference=False,
+        names=None,
     ):
         super().__init__()
         self.skip_heatmap_inference = skip_heatmap_inference
@@ -255,19 +230,16 @@ class DetectionModel(nn.Module):
             with open(cfg, encoding="ascii", errors="ignore") as f:
                 self.yaml = yaml.safe_load(f)
 
-        # Inject scale choice
         self.yaml["scale"] = scale
 
-        # Define model
         ch = self.yaml["ch"] = self.yaml.get("ch", ch)
         if nc and nc != self.yaml["nc"]:
             logger.info(f"Overriding {cfg} nc={self.yaml['nc']} with nc={nc}")
             self.yaml["nc"] = nc
 
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])
-        self.names = {i: f"class_{i}" for i in range(self.yaml["nc"])}
+        self.names = names if names is not None else {i: f"class_{i}" for i in range(self.yaml["nc"])}
 
-        # Head discovery
         self.head_indices = {}
         for i, m in enumerate(self.model):
             name = (
@@ -288,19 +260,15 @@ class DetectionModel(nn.Module):
             {k: self.model[i] for k, i in self.head_indices.items()}
         )
 
-        # Stride computation (if Detect head present)
         idx = self.head_indices.get("detect")
         if idx is not None:
             m = self.model[idx]
             s = 256
 
-            # Use training mode so Detect outputs its nested dictionary structure
             self.train()
             with torch.no_grad():
-                # BS=2 to prevent BatchNorm1d from crashing during training mode init
                 y = self.forward(torch.zeros(2, ch, s, s))
 
-                # Fetch detection features accurately in multitask settings
                 feats = y
                 if isinstance(y, dict):
                     if "detect" in y and isinstance(y["detect"], dict) and "feats" in y["detect"]:
@@ -311,13 +279,11 @@ class DetectionModel(nn.Module):
                 if isinstance(feats, (list, tuple)):
                     m.stride = torch.tensor([s / x.shape[-2] for x in feats])
                 else:
-                    m.stride = torch.tensor([s / feats.shape[-2]])  # Adaptive stride for single scale
+                    m.stride = torch.tensor([s / feats.shape[-2]])
             self.stride = m.stride
 
-        # Initialization
         self._initialize_weights()
 
-        # We only call bias_init on heads that need it (like Detect)
         for m in self.heads.values():
             if hasattr(m, "bias_init"):
                 m.bias_init()
@@ -330,7 +296,7 @@ class DetectionModel(nn.Module):
         for m in self.modules():
             t = type(m)
             if t is nn.Conv2d:
-                pass  # init already handled or not needed for pretrained
+                pass
             elif t is nn.BatchNorm2d:
                 m.eps = 1e-3
                 m.momentum = 0.03
@@ -343,7 +309,7 @@ class DetectionModel(nn.Module):
             return
         n_p = sum(x.numel() for x in self.parameters())
         n_g = sum(x.numel() for x in self.parameters() if x.requires_grad)
-        len(list(self.modules()))  # All modules including subs
+        len(list(self.modules()))
         logger.info(
             f"Model Summary: {len(self.model)} layers, {n_p} parameters, {n_g} gradients"
         )
@@ -358,7 +324,7 @@ class DetectionModel(nn.Module):
             - Single-input modules: unwrap dicts via 'feats', tuples via [0]
         """
         if isinstance(module, SelectFeature):
-            return val  # SelectFeature handles dicts/lists itself
+            return val
         if isinstance(val, dict):
             return val.get("feats", val)
         return val
@@ -368,11 +334,10 @@ class DetectionModel(nn.Module):
         if len(args) > 1:
             kwargs["cmd"] = args[1]
 
-        y = []  # per-layer outputs for 'from' references
-        outputs = {}  # accumulated task-head outputs (heatmap, gate_score, etc.)
+        y = []
+        outputs = {}
 
         for i, m in enumerate(self.model):
-            # Resolve input from 'from' indices
             if m.f == -1:
                 xi = x
             elif isinstance(m.f, int):
@@ -380,17 +345,14 @@ class DetectionModel(nn.Module):
             else:
                 xi = [y[j] if j != -1 else x for j in m.f]
 
-            # Unwrap — convert dicts/tuples into what the module expects
             if isinstance(xi, list):
                 xi = [self._unwrap_input(v, m) for v in xi]
             else:
                 xi = self._unwrap_input(xi, m)
 
-            # Ensure list input for multi-scale heads
             if isinstance(m, (Detect, HeatmapHead)) and not isinstance(xi, list):
                 xi = [xi]
 
-            # Skip HeatmapHead if in inference mode and skip_heatmap_inference is True
             if (
                 not self.training
                 and self.skip_heatmap_inference
@@ -399,19 +361,14 @@ class DetectionModel(nn.Module):
                 y.append(None)
                 continue
 
-            # Call module — inject accumulated outputs for kwarg-aware modules
             if getattr(m, "forward_with_kwargs", False):
                 xi = m(xi, **{**kwargs, **outputs})
             else:
                 xi = m(xi)
 
-            # Collect task outputs from dict-returning heads
             if isinstance(xi, dict):
-                # Only overwrite 'feats' if it's explicitly detection features (list).
-                # This prevents single-scale heads (like Classification) from overriding the multi-scale detection feats needed by losses.
                 if "feats" in xi:
                     if "feats" in outputs and isinstance(outputs["feats"], list) and not isinstance(xi["feats"], list):
-                        # Don't overwrite multi-scale feats with single-scale feats
                         xi_copy = dict(xi)
                         del xi_copy["feats"]
                         outputs.update(xi_copy)
@@ -420,12 +377,7 @@ class DetectionModel(nn.Module):
                 else:
                     outputs.update(xi)
 
-            # Save output for 'from' references and advance
             y.append(xi if m.i in self.save else None)
             x = xi
 
         return outputs if outputs else x
-
-
-# Diagnostic helper for parse_model
-# logger.info(f"DEBUG: Found head type {t}")

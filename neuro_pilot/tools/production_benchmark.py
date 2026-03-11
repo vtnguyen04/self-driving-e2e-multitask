@@ -20,11 +20,9 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     try:
-        # Initialize Backend
         with console.status(f"[bold cyan]Initializing {Path(backend_path).name} on {device}..."):
             backend = AutoBackend(backend_path, device=device)
 
-        # Warmup
         input_shape = (imgsz[0], imgsz[1], imgsz[2], imgsz[3])
         dummy_input = torch.randn(input_shape, device=device)
         if hasattr(backend, 'fp16') and backend.fp16:
@@ -36,7 +34,6 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
         if torch.cuda.is_available():
             torch.cuda.synchronize()
 
-        # Benchmark
         latencies = []
         console.print(f"  [green]Benchmarking ({iterations} iterations)...[/green]")
 
@@ -55,7 +52,7 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
                 t1 = time.perf_counter()
-                latencies.append((t1 - t0) * 1000) # ms
+                latencies.append((t1 - t0) * 1000)
                 progress.update(task, advance=1)
 
         avg_latency = np.mean(latencies)
@@ -65,7 +62,6 @@ def run_performance_test(backend_path, imgsz=(1, 3, 640, 640), iterations=200, w
         std_dev = np.std(latencies)
         fps = 1000 / avg_latency if avg_latency > 0 else 0
 
-        # DEBUG
         print(f"DEBUG: Latency={avg_latency}, FPS={fps}")
 
         return {
@@ -107,7 +103,6 @@ def main():
         res = run_performance_test(w, imgsz=(args.batch, 3, args.imgsz[0], args.imgsz[1]), iterations=args.iters, warmup=args.warmup)
         results.append(res)
 
-    # Display results
     table = Table(title=f"Benchmark Results (Batch Size: {args.batch}, Resolution: {args.imgsz})")
     table.add_column("File", style="cyan", no_wrap=True)
     table.add_column("Backend", style="magenta")
