@@ -468,9 +468,9 @@ class CombinedLoss(nn.Module):
 
         with torch.no_grad():
             beta = 0.5
-            det_loss_target = 5.0
+            det_loss_target = 8.0 # Increased from 5.0
             pgp_gate = torch.exp(-beta * torch.relu(l_det_raw - det_loss_target))
-            pgp_gate = torch.clamp(pgp_gate, min=0.5)
+            pgp_gate = torch.clamp(pgp_gate, min=0.7) # Increased from 0.5 to keep 70% of gradients
 
         gated_l_traj_raw = l_traj_raw * pgp_gate
         gated_l_heat_raw = l_heat_raw * pgp_gate

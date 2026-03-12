@@ -183,7 +183,7 @@ class LetterBox(BaseTransform):
 class StandardAugmentor(BaseTransform):
     """
     Augmentation Suite using Albumentations.
-    Unified from legacy dataset_v2.py.
+    Unified from core NeuroPilot data drivers.
     """
     def __init__(self, training: bool = True, imgsz: int = 640, config=None):
         super().__init__()
@@ -263,10 +263,9 @@ class StandardAugmentor(BaseTransform):
             ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=['category_ids'], min_visibility=0.1, min_area=1.0),
                keypoint_params=A.KeypointParams(format='xy', remove_invisible=False))
 
-    def close_mosaic(self):
+    def apply_refinement_policy(self):
         """Disable mosaic augmentation."""
         self.mosaic_prob = 0.0
-        logger.info("Mosaic augmentation closed.")
 
     def __call__(self, labels: Dict[str, Any]):
         img = labels["img"]

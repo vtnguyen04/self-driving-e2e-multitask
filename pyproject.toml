@@ -73,7 +73,7 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = [
-    "E701", "E702", "E402", "F403", "F405", "E501", "F401", "E722", "F811", "F823"
+    "E701", "E702", "E402", "F403", "F405", "E501", "F401", "E722", "F811", "F823", "N803", "N806"
 ]
 
 [tool.pytest.ini_options]

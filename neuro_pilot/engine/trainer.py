@@ -9,7 +9,7 @@ from pathlib import Path
 from neuro_pilot.utils.logger import logger, colorstr
 
 from neuro_pilot.utils.losses import CombinedLoss
-from neuro_pilot.utils.torch_utils import save_checkpoint, select_device
+from neuro_pilot.utils.torch_utils import select_device
 from .logger import MetricLogger
 from .callbacks import CallbackList, LoggingCallback, CheckpointCallback, VisualizationCallback, PlottingCallback
 from .validator import Validator
@@ -386,9 +386,10 @@ class Trainer(BaseTrainer):
             if p not in assigned:
                 other_params.add(p)
 
+        # Simplified Grouping: g0 (decay), g1 (bias), g2 (norm/others)
         g0 = list(decay_params)
-        g1 = list(bias_params - decay_params)
-        g2 = list(other_params - decay_params - bias_params)
+        g1 = list(bias_params)
+        g2 = list(other_params - set(g0) - set(g1))
 
         if name.lower() == 'adamw':
             beta1 = 0.9 if momentum == 0.937 else momentum
@@ -461,11 +462,16 @@ class Trainer(BaseTrainer):
         self.callbacks.on_epoch_end(self)
 
     def _apply_warmup(self, ni, nw):
-        """Linear warmup for learning rate and momentum."""
+        """Linear warmup for learning rate and momentum with safer bias scaling."""
         if ni <= nw:
             xi = [0, nw]
             for j, x in enumerate(self.optimizer.param_groups):
-                x["lr"] = np.interp(ni, xi, [self.cfg.trainer.warmup_bias_lr if j == 0 else 0.0, self.cfg.trainer.learning_rate])
+                # Apply warmup to all groups, but cap bias_lr to something sensible if it's too high
+                warmup_lr_start = 0.0
+                if j == 1: # Bias group in our simplified grouping (g1)
+                    warmup_lr_start = min(self.cfg.trainer.warmup_bias_lr, self.cfg.trainer.learning_rate * 5)
+
+                x["lr"] = np.interp(ni, xi, [warmup_lr_start, self.cfg.trainer.learning_rate])
                 if "momentum" in x:
                     x["momentum"] = np.interp(ni, xi, [self.cfg.trainer.warmup_momentum, self.cfg.trainer.momentum])
 
@@ -575,10 +581,10 @@ class Trainer(BaseTrainer):
             self.epoch = epoch
 
             if epoch == (self.cfg.trainer.max_epochs - 10):
-                if hasattr(self.train_loader.dataset, 'close_mosaic'):
-                    self.train_loader.dataset.close_mosaic()
+                if hasattr(self.train_loader.dataset, 'apply_refinement_policy'):
+                    self.train_loader.dataset.apply_refinement_policy()
                     from neuro_pilot.utils.logger import colorstr
-                    logger.info(f"{colorstr('bright_blue', 'bold', 'Refinement State:')} Mosaic closed, robustness samples injected.")
+                    logger.info(f"{colorstr('bright_blue', 'bold', 'Refinement State:')} Mosaic closed, synthetic refinement samples injected.")
                     if hasattr(self.train_loader, 'reset'):
                         self.train_loader.reset()
 

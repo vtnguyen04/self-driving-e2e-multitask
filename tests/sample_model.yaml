@@ -20,10 +20,10 @@ backbone:
 # Head (Neck + MT Heads)
 head:
   # Feature Selection
-  - [0, 1, SelectFeature, [4]]   # 1 (P5 - 960ch - stride 32)
-  - [0, 1, SelectFeature, [3]]   # 2 (P4 - 96ch - stride 16)
-  - [0, 1, SelectFeature, [2]]   # 3 (P3 - 64ch - stride 8)
-  - [0, 1, SelectFeature, [1]]   # 4 (P2 - 32ch - stride 4)
+  - [0, 1, FeatureRouter, [4]]   # 1 (P5 - 960ch - stride 32)
+  - [0, 1, FeatureRouter, [3]]   # 2 (P4 - 96ch - stride 16)
+  - [0, 1, FeatureRouter, [2]]   # 3 (P3 - 64ch - stride 8)
+  - [0, 1, FeatureRouter, [1]]   # 4 (P2 - 32ch - stride 4)
 
   # Language & Fusion (The "Command" take-in layer)
   - [1, 1, LanguagePromptEncoder, [256, nm, 'embedding']] # 5 (Prompt -> 256ch Embedding)

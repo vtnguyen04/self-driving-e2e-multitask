@@ -1,7 +1,7 @@
 import unittest
 import torch
 from neuro_pilot.nn.modules import (
-    Conv, Bottleneck, C3k2, Proto, C2PSA, Detect, Segment, HeatmapHead, TrajectoryHead, SelectFeature, TimmBackbone, ClassificationHead
+    Conv, Bottleneck, C3k2, Proto, C2PSA, Detect, Segment, HeatmapHead, TrajectoryHead, FeatureRouter, TimmBackbone, ClassificationHead
 )
 
 class TestNNModules(unittest.TestCase):
@@ -116,8 +116,8 @@ class TestNNModules(unittest.TestCase):
         self.assertEqual(y['waypoints'].shape, (self.batch_size, 10, 2))
 
     def test_select_feature(self):
-        print("Testing SelectFeature...")
-        m = SelectFeature(index=1)
+        print("Testing FeatureRouter...")
+        m = FeatureRouter(index=1)
         # Timm backbone outputs dict of channels
         x = {0: torch.randn(1, 1), 1: torch.randn(1, 32)}
         y = m(x)

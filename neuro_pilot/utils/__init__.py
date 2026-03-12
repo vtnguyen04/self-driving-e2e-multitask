@@ -1,3 +1,7 @@
+"""
+NeuroPilot Utility Toolbox.
+Standardized operations, NMS logic, and logging facilities.
+"""
 from .logger import logger
 from .ops import (
     xywh2xyxy,

@@ -1,6 +1,6 @@
 import unittest
 import os
-from neuro_pilot.data.neuro_pilot_dataset_v2 import NeuroPilotDataset
+from neuro_pilot.data.neuro_pilot_dataset import NeuroPilotDataset
 
 class TestYOLOLoading(unittest.TestCase):
     def test_load_dummy_yolo(self):

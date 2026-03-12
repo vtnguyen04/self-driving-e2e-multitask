@@ -20,7 +20,6 @@ class Sample(BaseModel):
 
 from neuro_pilot.data.augment import StandardAugmentor
 from neuro_pilot.data.utils import check_dataset, get_image_files, img2label_paths, parse_yolo_label
-from neuro_pilot.utils.logger import logger
 
 class NeuroPilotDataset(Dataset):
     def __init__(self, root_dir=None, split='train', transform=None, sequence_mode=False, samples=None, dataset_yaml=None, imgsz=640):
@@ -51,16 +50,16 @@ class NeuroPilotDataset(Dataset):
         m_imgsz = self.imgsz[0] if isinstance(self.imgsz, tuple) else self.imgsz
         self.mosaic = Mosaic(self, imgsz=m_imgsz, p=p)
 
-    def close_mosaic(self):
+    def apply_refinement_policy(self):
         """Disable Mosaic augmentation."""
-        if hasattr(self.transform, "close_mosaic"):
-            self.transform.close_mosaic()
+        if hasattr(self.transform, "apply_refinement_policy"):
+            self.transform.apply_refinement_policy()
         if hasattr(self, "mosaic"):
             self.mosaic.p = 0.0
 
 
         if self.split == 'train':
-            self._inject_robustness_samples()
+            self._inject_synthetic_refinement_samples()
 
     def _load_yolo_samples(self) -> List[Sample]:
         """Load and normalize YOLO samples (Ultralytics + MultiTask)."""
@@ -177,8 +176,8 @@ class NeuroPilotDataset(Dataset):
             ))
         return loaded_samples
 
-    def _inject_robustness_samples(self):
-        if getattr(self, '_robustness_injected', False):
+    def _inject_synthetic_refinement_samples(self):
+        if getattr(self, '_refinement_applied', False):
             return
         import copy
         import random
@@ -189,7 +188,7 @@ class NeuroPilotDataset(Dataset):
                 s_aug.command = random.choice([1, 2])
                 aug.append(s_aug)
         self.samples.extend(aug)
-        self._robustness_injected = True
+        self._refinement_applied = True
 
     def __len__(self):
         return len(self.samples) - 1 if self.sequence_mode else len(self.samples)
@@ -371,6 +370,13 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
 
     tr_ds = NeuroPilotDataset(root_dir=root_dir, transform=tr_pipe, dataset_yaml=config.data.dataset_yaml, split='train', imgsz=config.data.image_size)
 
+    # Doubling data samples to improve convergence for small datasets (similar to debug script)
+    if len(tr_ds.samples) < 5000:
+        original_size = len(tr_ds.samples)
+        tr_ds.samples = tr_ds.samples * 2
+        from neuro_pilot.utils.logger import logger
+        logger.info(f"Dataset doubling applied: {original_size} -> {len(tr_ds.samples)} samples")
+
     val_ds = NeuroPilotDataset(root_dir=root_dir, transform=val_pipe, dataset_yaml=config.data.dataset_yaml, split='val', imgsz=config.data.image_size)
 
     if len(val_ds) == 0 and config.data.train_split < 1.0:
@@ -379,7 +385,7 @@ def create_dataloaders(config, root_dir=None, use_weighted_sampling=True, use_au
         tr_ds, val_ds = random_split(tr_ds, [tr_size, len(tr_ds) - tr_size], generator=torch.Generator().manual_seed(42))
         val_ds.dataset.transform = val_pipe
 
-    tr_loader = build_dataloader(tr_ds, batch=config.data.batch_size, shuffle=True, workers=config.data.num_workers, collate_fn=custom_collate_fn)
+    tr_loader = build_dataloader(tr_ds, batch=config.data.batch_size, shuffle=True, workers=config.data.num_workers, collate_fn=custom_collate_fn, drop_last=True)
     val_loader = build_dataloader(val_ds, batch=config.data.batch_size, shuffle=False, workers=config.data.num_workers, collate_fn=custom_collate_fn)
 
     return tr_loader, val_loader

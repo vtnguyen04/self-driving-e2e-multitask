@@ -64,7 +64,6 @@ class Validator(BaseValidator):
     def init_metrics(self):
         """Initialize metrics and evaluators."""
         names = getattr(self, 'names', getattr(self.model, 'names', None))
-        from neuro_pilot.utils.logger import logger as LOGGER
         self.evaluator = DetectionEvaluator(self.cfg.head.num_classes, self.device, self.log_dir, names=names)
         self.total_loss = 0.0
         self.total_l1 = 0.0

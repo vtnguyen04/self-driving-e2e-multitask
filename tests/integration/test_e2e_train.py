@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from neuro_pilot.engine.trainer import Trainer
 from neuro_pilot.cfg.schema import AppConfig
-from neuro_pilot.data.neuro_pilot_dataset_v2 import create_dummy_dataloader
+from neuro_pilot.data.neuro_pilot_dataset import create_dummy_dataloader
 
 class TestE2ETrain(unittest.TestCase):
     def setUp(self):

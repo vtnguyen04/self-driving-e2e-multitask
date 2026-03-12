@@ -21,7 +21,8 @@ _SAFE_MAP = {
     "C2PSA": C2PSA,
     "TimmBackbone": TimmBackbone,
     "NeuroPilotBackbone": NeuroPilotBackbone,
-    "SelectFeature": SelectFeature,
+    "FeatureRouter": FeatureRouter,
+    "UnifiedDetectionHead": UnifiedDetectionHead,
     "Detect": Detect,
     "Segment": Segment,
     "HeatmapHead": HeatmapHead,
@@ -115,7 +116,7 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
     elif m.__name__ == "NeuroPilotBackbone":
         model_name = args[0]
         c2 = m.get_channels(model_name)
-    elif m.__name__ == "SelectFeature":
+    elif m.__name__ == "FeatureRouter":
         idx = args[0]
         backbone_ch = ch[f]
         if isinstance(backbone_ch, (list, tuple)):
@@ -124,7 +125,7 @@ def _handle_module_specials(m, f, n, args, ch, nc, gw, d, layers, scale):
             c2 = backbone_ch[idx]
         else:
             c2 = backbone_ch
-    elif m.__name__ in {"Detect", "Segment", "HeatmapHead", "TrajectoryHead", "ClassificationHead"}:
+    elif m.__name__ in {"Detect", "UnifiedDetectionHead", "Segment", "HeatmapHead", "TrajectoryHead", "ClassificationHead"}:
         c2 = ch[f[0]] if isinstance(f, list) else ch[f]
         ch_in = [ch[x] for x in f] if isinstance(f, list) else [ch[f]]
         args.insert(0, ch_in)
@@ -319,11 +320,11 @@ class DetectionModel(nn.Module):
         """Unwrap dict/tuple outputs into the tensor(s) the module expects.
 
         Rules:
-            - SelectFeature: pass through raw (it handles dicts/lists internally)
+            - FeatureRouter: pass through raw (it handles collections internally)
             - Multi-input heads (Concat, Detect, HeatmapHead): pass as list
             - Single-input modules: unwrap dicts via 'feats', tuples via [0]
         """
-        if isinstance(module, SelectFeature):
+        if isinstance(module, FeatureRouter):
             return val
         if isinstance(val, dict):
             return val.get("feats", val)

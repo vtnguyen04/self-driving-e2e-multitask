@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import torch
 import numpy as np
-from neuro_pilot.data.neuro_pilot_dataset_v2 import NeuroPilotDataset, custom_collate_fn, Sample
+from neuro_pilot.data.neuro_pilot_dataset import NeuroPilotDataset, custom_collate_fn, Sample
 from neuro_pilot.data.augment import StandardAugmentor
 
 class TestDataPipeline(unittest.TestCase):
@@ -42,7 +42,7 @@ class TestDataPipeline(unittest.TestCase):
         # Patch random.random at the top level or wherever it's used
         with patch('random.random', return_value=0.1):
             ds = NeuroPilotDataset(samples=samples, split='train')
-            ds.close_mosaic() # Triggers robustness injection
+            ds.apply_refinement_policy() # Triggers robustness injection
             self.assertEqual(len(ds.samples), 2)
             self.assertIn(ds.samples[1].command, [1, 2])
 

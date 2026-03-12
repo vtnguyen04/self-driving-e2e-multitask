@@ -86,5 +86,5 @@ def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1, sampler=Non
         pin_memory=nd > 0 and pin_memory,
         collate_fn=collate_fn,
         worker_init_fn=seed_worker,
-        drop_last=drop_last and len(dataset) % batch != 0
+        drop_last=drop_last
     )

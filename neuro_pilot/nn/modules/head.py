@@ -14,7 +14,7 @@ from .conv import Conv, DWConv
 from .attention import AttentionGate
 from .base import BaseHead
 
-__all__ = ["Detect", "v10Detect", "HeatmapHead", "TrajectoryHead", "BaseHead", "Segment", "ClassificationHead"]
+__all__ = ["Detect", "UnifiedDetectionHead", "HeatmapHead", "TrajectoryHead", "BaseHead", "Segment", "ClassificationHead"]
 
 class Detect(BaseHead):
     """YOLO Detect head for object detection models."""
@@ -133,7 +133,7 @@ class Detect(BaseHead):
                 a[-1].bias.data[:] = 2.0
                 b[-1].bias.data[: self.nc] = math.log(5 / self.nc / (640 / self.stride[i]) ** 2)
 
-class v10Detect(Detect):
+class UnifiedDetectionHead(Detect):
     end2end = True
     def __init__(self, nc: int = 80, ch: tuple = ()):
         super().__init__(ch=ch, nc=nc, end2end=True)

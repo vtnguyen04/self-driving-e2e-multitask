@@ -2,9 +2,6 @@
 import argparse
 import sys
 from pathlib import Path
-import logging
-import torch
-from neuro_pilot.utils.logger import logger, log_system_info
 from neuro_pilot.engine.model import NeuroPilot
 from neuro_pilot.engine.task import TaskRegistry
 

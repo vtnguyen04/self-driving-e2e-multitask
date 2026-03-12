@@ -26,15 +26,15 @@ def test_trainer_progress_string(base_config):
     header_str = trainer.progress_string()
 
     # 13 items total ("Epoch", "GPU_mem" + 9 loss items + "Instances", "Size").
-    # ("%10s" * 2 + "%11s" * 9 + "%11s" * 2) = 20 + 99 + 22 = 141 chars.
-    assert len(header_str) == 141
+    # Updated to 112 characters for leaner, professional UI
+    assert len(header_str) == 112
 
-    # Verify specific columns exist in the header
-    assert "GPU_mem" in header_str
+    # Verify specific columns exist in the header (account for lean naming)
+    assert "mem" in header_str
     assert "Epoch" in header_str
     assert "traj" in header_str
     assert "dfl" in header_str
-    assert "Instances" in header_str
+    assert "inst" in header_str
 
 def test_trainer_batch_metrics(base_config):
     """Test the batch metrics dictionary updates."""

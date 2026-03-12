@@ -26,14 +26,16 @@ class DataExportMixin:
     """Mock for legacy DataExportMixin compatibility."""
     pass
 
-def TryExcept(msg=""):
-    """TryExcept decorator."""
+def safe_call(msg=""):
+    """Decorator to safely execute a function and suppress errors with an optional log message."""
     def decorator(func):
         def wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                LOGGER.warning(f"{msg}: {e}")
+                from neuro_pilot.utils.logger import logger
+                logger.error(f"{msg}: {e}" if msg else str(e))
+                return None
         return wrapper
     return decorator
 
@@ -299,7 +301,7 @@ class ConfusionMatrix(DataExportMixin):
         fp = self.matrix.sum(1) - tp
         return (tp, fp) if self.task == "classify" else (tp[:-1], fp[:-1])
 
-    @TryExcept(msg="ConfusionMatrix plot failure")
+    @safe_call(msg="ConfusionMatrix plot failure")
     @plt_settings()
     def plot(self, normalize: bool = True, save_dir: str = "", on_plot=None):
         array = self.matrix / ((self.matrix.sum(0).reshape(1, -1) + 1e-9) if normalize else 1)
